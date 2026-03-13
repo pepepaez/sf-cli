@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""Run predefined Salesforce reports."""
+
+import argparse
+import csv
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sfq
+import transforms
+
+REPORTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reports")
+
+
+def load_report(name):
+    """Load a report definition from JSON."""
+    path = os.path.join(REPORTS_DIR, f"{name}.json")
+    if not os.path.exists(path):
+        print(f"Report not found: {name}", file=sys.stderr)
+        print(f"Available reports: {', '.join(list_reports())}", file=sys.stderr)
+        sys.exit(1)
+    with open(path) as f:
+        return json.load(f)
+
+
+def list_reports():
+    """Return list of available report names."""
+    reports = []
+    for f in sorted(os.listdir(REPORTS_DIR)):
+        if f.endswith(".json"):
+            reports.append(f[:-5])
+    return reports
+
+
+def collect_inputs(report_def):
+    """Prompt user for report inputs, showing defaults."""
+    values = {}
+    for inp in report_def.get("inputs", []):
+        default = inp.get("default", "")
+        prompt = inp["prompt"]
+        if default:
+            prompt += f" [{default}]"
+        prompt += ": "
+        value = input(prompt).strip()
+        values[inp["name"]] = value if value else default
+    return values
+
+
+def pick_transform(report_def):
+    """Let user pick a transform from the report's available transforms."""
+    available = report_def.get("transforms", [])
+    if not available:
+        return None
+
+    options = ["None  —  Show raw data"]
+    for t_key in available:
+        t = transforms.TRANSFORMS.get(t_key)
+        if t:
+            options.append(f"{t_key}  —  {t['name']}")
+
+    selected = sfq.fzf_select(options, prompt="Transform: ")
+    if selected.startswith("None"):
+        return None
+    return selected.split("  —  ")[0].strip()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Run predefined Salesforce reports")
+    parser.add_argument("report", nargs="?", help="Report name")
+    parser.add_argument("--vd", action="store_true", help="Open results in visidata")
+    parser.add_argument("-o", "--output", help="Save results to CSV file")
+    parser.add_argument("-t", "--table", action="store_true", help="Horizontal table format")
+    parser.add_argument("--list", action="store_true", help="List available reports")
+    args = parser.parse_args()
+
+    if args.list:
+        print_report_list()
+        return
+
+    # Pick report
+    if args.report:
+        report_name = args.report
+    else:
+        reports = list_reports()
+        if not reports:
+            print("No reports found. Add .json files to the reports/ directory.", file=sys.stderr)
+            sys.exit(1)
+        descriptions = []
+        for name in reports:
+            with open(os.path.join(REPORTS_DIR, f"{name}.json")) as f:
+                rd = json.load(f)
+                descriptions.append(f"{name}  —  {rd.get('description', '')}")
+        selected = sfq.fzf_select(descriptions, prompt="Select report: ")
+        report_name = selected.split("  —  ")[0].strip()
+
+    report_def = load_report(report_name)
+    print(f"\n{report_def['name']}")
+    print(f"{report_def.get('description', '')}\n")
+
+    # Collect inputs
+    values = collect_inputs(report_def)
+
+    # Build and run query
+    query = report_def["query"].format(**values)
+    records = sfq.sf_query(query)
+    field_map = report_def.get("fields")
+    print(f"Found: {len(records)} records\n")
+
+    if not records:
+        return
+
+    # Pick and apply transform
+    transform_key = pick_transform(report_def)
+    if transform_key:
+        t = transforms.TRANSFORMS.get(transform_key)
+        if t:
+            records, field_map = t["func"](records, field_map)
+            print(f"\nTransformed: {len(records)} rows\n")
+            # Transforms always output as table since they're aggregated
+            args.table = True
+
+    # Output
+    if args.output:
+        save_csv(records, field_map, args.output)
+        print(f"Saved to {args.output}")
+        print(f"Open with: vd {args.output}")
+    elif args.vd:
+        sfq.open_in_vd(records, field_map)
+    elif args.table:
+        sfq.print_table(records, field_map)
+    else:
+        sfq.print_cards(records, field_map)
+
+
+def print_report_list():
+    """Print all available reports with descriptions."""
+    reports = list_reports()
+    if not reports:
+        print("No reports found.")
+        return
+    print("\nAvailable reports:\n")
+    for name in reports:
+        with open(os.path.join(REPORTS_DIR, f"{name}.json")) as f:
+            rd = json.load(f)
+        print(f"  {name}")
+        print(f"    {rd.get('description', '')}\n")
+
+
+def save_csv(records, field_map, path):
+    """Save records to a CSV file."""
+    if not records:
+        print("No records to save.")
+        return
+    if field_map:
+        headers = list(field_map.values())
+        keys = list(field_map.keys())
+    else:
+        keys = list(records[0].keys())
+        headers = keys
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        for r in records:
+            writer.writerow([r.get(k, "") or "" for k in keys])
+
+
+if __name__ == "__main__":
+    main()

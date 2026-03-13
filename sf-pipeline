@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Interactive pipeline explorer with drill-down navigation."""
+
+import argparse
+import os
+import re
+import sys
+from collections import defaultdict
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sfq
+from shared import (
+    BOLD, CYAN, DIM, GREEN, RESET,
+    AGG_DIMENSIONS, DEFAULT_DIMS, DEFAULT_MANAGER_ID, DEAL_TYPES,
+    LIST_FIELD_MAP, QUARTER_HELP,
+    build_quarter_clause, c, dump_output, enrich, fmt_eur, fzf,
+    format_table_lines, opp_list_view, remap_type, to_float,
+)
+
+OPP_QUERY = """
+SELECT Account.Name, Name, Id, convertCurrency(Amount), CurrencyIsoCode,
+       Territory__c, Owner.Name, CloseDate, StageName, Type,
+       Solution_Strategist1__r.Name, Supporting_Solution_Strategist__r.Name,
+       Managerial_Forecast_Category__c, Competitor__c, Compelling_Event__c,
+       NextStep, CreatedDate, LastStageChangeDate, Description
+FROM Opportunity
+WHERE IsClosed = false
+  AND (Solution_Strategist1__r.ManagerId = '{manager_id}'
+       OR Solution_Strategist1__r.Id = '{manager_id}')
+  AND {quarter_clause}
+ORDER BY CloseDate ASC
+""".strip()
+
+
+def fetch_opps(manager_id, quarter_clause):
+    query = OPP_QUERY.format(manager_id=manager_id, quarter_clause=quarter_clause)
+    records = sfq.sf_query(query)
+    records = [r for r in records if r.get("Type", "") in DEAL_TYPES]
+    return enrich(records)
+
+
+def aggregate_report(records, dim_keys):
+    groups = defaultdict(lambda: {"acv": 0.0, "count": 0, "opps": []})
+    for r in records:
+        key = tuple(r[AGG_DIMENSIONS[dk][0]] for dk in dim_keys)
+        groups[key]["acv"] += r["_acv"]
+        groups[key]["count"] += 1
+        groups[key]["opps"].append(r)
+
+    rows = []
+    for key in sorted(groups.keys()):
+        g = groups[key]
+        row = {"_opps": g["opps"]}
+        for i, dk in enumerate(dim_keys):
+            row[dk] = key[i]
+        row["acv"] = fmt_eur(g["acv"])
+        row["count"] = str(g["count"])
+        rows.append(row)
+    return rows
+
+
+def level_0(records):
+    """Aggregated report with configurable dimensions."""
+    dims = list(DEFAULT_DIMS)
+
+    while True:
+        agg_rows = aggregate_report(records, dims)
+        total_acv = sum(r["_acv"] for r in records)
+
+        if not agg_rows:
+            print("No records found.")
+            return
+
+        field_map = {}
+        for dk in dims:
+            field_map[dk] = AGG_DIMENSIONS[dk][1]
+        field_map["acv"] = "ACV"
+        field_map["count"] = "#"
+
+        header, sep, lines = format_table_lines(agg_rows, field_map)
+
+        all_dim_keys = list(AGG_DIMENSIONS.keys())
+        dim_toggles = []
+        for dk in all_dim_keys:
+            label = AGG_DIMENSIONS[dk][1]
+            if dk in dims:
+                dim_toggles.append(f"  \033[32mON \033[0m  {label}")
+            else:
+                dim_toggles.append(f"  \033[2mOFF\033[0m  {label}")
+
+        fzf_items = dim_toggles + [f"{'─' * 40}", header, sep] + lines
+        help_line = (f"\033[2mESC\033[0m back  "
+                     f"\033[2mEnter\033[0m toggle/drill-down")
+        fzf_header = (f"{help_line}\n"
+                      f"\033[1m\033[36mTotal: {fmt_eur(total_acv)}\033[0m  |  {len(records)} opps")
+
+        selected = fzf(fzf_items, prompt="Pipeline > ", header=fzf_header)
+        if selected is None:
+            return
+
+        selected_clean = re.sub(r'\033\[[0-9;]*m', '', selected).strip()
+
+        if selected_clean.startswith(("ON ", "OFF")):
+            for dk in all_dim_keys:
+                if AGG_DIMENSIONS[dk][1] in selected_clean:
+                    if dk in dims:
+                        if len(dims) > 1:
+                            dims.remove(dk)
+                    else:
+                        dims.append(dk)
+                    break
+            continue
+
+        if selected_clean.startswith("─") or selected_clean.startswith("--"):
+            continue
+
+        stripped_lines = [l.rstrip() for l in lines]
+        if selected_clean in stripped_lines:
+            idx = stripped_lines.index(selected_clean)
+        else:
+            idx = next((i for i, l in enumerate(stripped_lines)
+                        if l.rstrip() == selected.rstrip()), None)
+            if idx is None:
+                continue
+
+        opp_list_view(agg_rows[idx]["_opps"], selected_clean)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Interactive pipeline explorer")
+    parser.add_argument("-q", "--quarter", metavar="QUARTER", default="this+next",
+                        help=f"{QUARTER_HELP}")
+    parser.add_argument("-o", "--output", metavar="OUTPUT",
+                        help="Non-interactive output: vd, console, or filename.csv")
+    parser.add_argument("--team", metavar="MANAGER_ID", default=DEFAULT_MANAGER_ID,
+                        help="Manager ID (default: yours)")
+    args = parser.parse_args()
+
+    quarter_clause = build_quarter_clause(args.quarter)
+    records = fetch_opps(args.team, quarter_clause)
+
+    if not records:
+        print("No open opportunities found.")
+        return
+
+    if args.output:
+        dump_output(records, args.output)
+    else:
+        level_0(records)
+
+
+if __name__ == "__main__":
+    main()

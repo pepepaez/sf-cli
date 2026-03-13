@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""Search and browse opportunities with flexible filters."""
+
+import argparse
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sfq
+from shared import (
+    DEAL_TYPES, LIST_FIELD_MAP, QUARTER_HELP,
+    build_quarter_clause, dump_output, enrich, escape_soql,
+    fmt_eur, fzf, format_table_lines, opp_list_view, remap_type, to_float,
+)
+
+OPP_FIELDS = (
+    "Account.Name, Name, Id, convertCurrency(Amount), CurrencyIsoCode, "
+    "Territory__c, Owner.Name, CloseDate, StageName, Type, "
+    "Solution_Strategist1__r.Name, Supporting_Solution_Strategist__r.Name, "
+    "Managerial_Forecast_Category__c, Competitor__c, Compelling_Event__c, "
+    "NextStep, CreatedDate, LastStageChangeDate, Description"
+)
+
+
+def build_query(args):
+    """Build SOQL query from filter arguments."""
+    conditions = ["IsClosed = false"]
+
+    if args.account:
+        conditions.append(f"Account.Name LIKE '%{escape_soql(args.account)}%'")
+
+    if args.ae:
+        conditions.append(f"Owner.Name LIKE '%{escape_soql(args.ae)}%'")
+
+    if args.ninja:
+        conditions.append(f"Solution_Strategist1__r.Name LIKE '%{escape_soql(args.ninja)}%'")
+
+    if args.quarter:
+        conditions.append(build_quarter_clause(args.quarter))
+
+    if args.type:
+        conditions.append(f"Type = '{escape_soql(args.type)}'")
+
+    if args.stage:
+        conditions.append(f"StageName LIKE '%{escape_soql(args.stage)}%'")
+
+    where = " AND ".join(conditions)
+    return (
+        f"SELECT {OPP_FIELDS} FROM Opportunity "
+        f"WHERE {where} "
+        "ORDER BY Account.Name, CloseDate ASC"
+    )
+
+
+def build_filter_summary(args):
+    """Build a human-readable summary of active filters."""
+    parts = []
+    if args.account:
+        parts.append(f"account=\"{args.account}\"")
+    if args.ae:
+        parts.append(f"owner=\"{args.ae}\"")
+    if args.ninja:
+        parts.append(f"ss=\"{args.ninja}\"")
+    if args.quarter:
+        parts.append(f"quarter={args.quarter}")
+    if args.type:
+        parts.append(f"type=\"{args.type}\"")
+    if args.stage:
+        parts.append(f"stage=\"{args.stage}\"")
+    return ", ".join(parts) if parts else "all open"
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Search and browse opportunities with filters")
+    parser.add_argument("--account", "-a", metavar="NAME",
+                        help="Filter by account name (fuzzy)")
+    parser.add_argument("--ae", metavar="NAME",
+                        help="Filter by opportunity owner / AE (fuzzy)")
+    parser.add_argument("--ninja", "-n", metavar="NAME",
+                        help="Filter by Solution Strategist (fuzzy)")
+    parser.add_argument("--quarter", "-q", metavar="QUARTER",
+                        help=f"Filter by quarter: {QUARTER_HELP}")
+    parser.add_argument("--type", "-t", metavar="TYPE",
+                        help="Filter by deal type (e.g. 'New Business')")
+    parser.add_argument("--stage", "-s", metavar="STAGE",
+                        help="Filter by stage (fuzzy, e.g. '4. Closing')")
+    parser.add_argument("--vd", action="store_true",
+                        help="Open results in VisiData")
+    parser.add_argument("--out", metavar="FILE",
+                        help="Save results to CSV file")
+    args = parser.parse_args()
+
+    # If no filters at all, prompt for account
+    has_filter = any([args.account, args.ae, args.ninja, args.quarter,
+                      args.type, args.stage])
+    if not has_filter:
+        search = input("Search account: ").strip()
+        if not search:
+            sys.exit(0)
+        args.account = search
+
+    query = build_query(args)
+    records = sfq.sf_query(query)
+    records = enrich(records)
+
+    filter_summary = build_filter_summary(args)
+    print(f"\n  {len(records)} opportunities ({filter_summary})\n")
+
+    if not records:
+        return
+
+    # Non-interactive outputs
+    if args.vd:
+        dump_output(records, "vd")
+        return
+    if args.out:
+        dump_output(records, args.out)
+        return
+
+    # Interactive: go straight to opp list with drill-down
+    opp_list_view(records, filter_summary)
+
+
+if __name__ == "__main__":
+    main()
