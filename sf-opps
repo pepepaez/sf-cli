@@ -91,14 +91,11 @@ def main():
                         help="Save results to CSV file")
     args = parser.parse_args()
 
-    # If no filters at all, prompt for account
     has_filter = any([args.account, args.ae, args.ninja, args.quarter,
                       args.type, args.stage])
     if not has_filter:
-        search = input("Search account: ").strip()
-        if not search:
-            sys.exit(0)
-        args.account = search
+        parser.print_help()
+        sys.exit(0)
 
     query = build_query(args)
     records = sfq.sf_query(query)

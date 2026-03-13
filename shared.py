@@ -64,7 +64,7 @@ LIST_FIELD_MAP = {
 
 DEFAULT_MANAGER_ID = _config.get("manager_id", "")
 DEAL_TYPES = ["New Business", "Up-sell and Retention"]
-QUARTER_HELP = "this, next, this+next (default: this+next)"
+QUARTER_HELP = "this, next, this+next, or Q32026/2026Q3/Q3/2026-Q3"
 
 # Aggregation dimensions
 AGG_DIMENSIONS = {
@@ -215,15 +215,47 @@ def escape_soql(s):
     return s.replace("'", "\\'")
 
 
+def _parse_quarter(spec):
+    """Parse a quarter string like Q32026, 2026Q3, Q3, 2026-Q3 into (quarter, year)."""
+    spec = spec.strip().upper().replace("-", "")
+    m = re.match(r'^Q([1-4])(\d{4})$', spec)       # Q32026
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m = re.match(r'^(\d{4})Q([1-4])$', spec)       # 2026Q3
+    if m:
+        return int(m.group(2)), int(m.group(1))
+    m = re.match(r'^Q([1-4])$', spec)               # Q3 (current year)
+    if m:
+        return int(m.group(1)), datetime.now().year
+    return None, None
+
+
+def _quarter_date_clause(q, year):
+    """Build SOQL date range for a specific quarter."""
+    start_month = (q - 1) * 3 + 1
+    start = f"{year}-{start_month:02d}-01"
+    if q == 4:
+        end = f"{year + 1}-01-01"
+    else:
+        end_month = q * 3 + 1
+        end = f"{year}-{end_month:02d}-01"
+    return f"(CloseDate >= {start} AND CloseDate < {end})"
+
+
 def build_quarter_clause(spec):
     """Build SOQL date clause from quarter spec."""
-    spec = spec.strip().lower()
-    if spec == "this":
+    raw = spec.strip().lower()
+    if raw == "this":
         return "CloseDate = THIS_QUARTER"
-    if spec == "next":
+    if raw == "next":
         return "CloseDate = NEXT_QUARTER"
-    if spec in ("this+next", "thisnext"):
+    if raw in ("this+next", "thisnext"):
         return "(CloseDate = THIS_QUARTER OR CloseDate = NEXT_QUARTER)"
+
+    q, year = _parse_quarter(spec)
+    if q:
+        return _quarter_date_clause(q, year)
+
     print(f"Unknown quarter: {spec}", file=sys.stderr)
     print(f"Options: {QUARTER_HELP}", file=sys.stderr)
     sys.exit(1)

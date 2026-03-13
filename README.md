@@ -39,7 +39,7 @@ sf-pipeline [options]
 
 | Option | Description |
 |--------|-------------|
-| `-q`, `--quarter QUARTER` | Quarter filter: `this`, `next`, `this+next` (default: `this+next`) |
+| `-q`, `--quarter QUARTER` | Quarter filter: `this`, `next`, `this+next`, `Q3`, `Q32026`, `2026Q3`, `2026-Q3` (default: `this+next`) |
 | `-o`, `--output OUTPUT` | Non-interactive: `vd`, `console`, or `filename.csv` |
 | `--team MANAGER_ID` | Use a different manager's team (default: yours) |
 
@@ -82,13 +82,13 @@ sf-opps [options]
 | `-a`, `--account NAME` | Filter by account name (fuzzy) |
 | `--ae NAME` | Filter by opportunity owner / AE (fuzzy) |
 | `-n`, `--ninja NAME` | Filter by Solution Strategist (fuzzy) |
-| `-q`, `--quarter QUARTER` | Filter by quarter: `this`, `next`, `this+next` |
+| `-q`, `--quarter QUARTER` | Filter by quarter: `this`, `next`, `this+next`, `Q3`, `Q32026`, `2026Q3`, `2026-Q3` |
 | `-t`, `--type TYPE` | Filter by deal type (e.g. `New Business`) |
 | `-s`, `--stage STAGE` | Filter by stage (fuzzy, e.g. `Closing`) |
 | `--vd` | Open results in VisiData (non-interactive) |
 | `--out FILE` | Save results to CSV file (non-interactive) |
 
-All filters combine. If no filters given, prompts for account name.
+All filters combine. At least one filter is required.
 
 **Key bindings (opp list):**
 
