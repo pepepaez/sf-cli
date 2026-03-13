@@ -35,22 +35,55 @@ def get_default_org():
     return None
 
 
+def check_sf_cli():
+    """Check if sf CLI is installed."""
+    result = subprocess.run(["which", "sf"], capture_output=True, text=True)
+    if result.returncode != 0:
+        print("  sf CLI not found. Install it: https://developer.salesforce.com/tools/salesforcecli")
+        sys.exit(1)
+
+
+def sf_login():
+    """Run sf org login web to authenticate."""
+    print("  Opening browser for Salesforce login...\n")
+    result = subprocess.run(["sf", "org", "login", "web"])
+    if result.returncode != 0:
+        print("\n  Login failed. Please try again.")
+        sys.exit(1)
+    print()
+
+
 def main():
     print("\n  sf-cli setup\n")
 
-    # Step 1: Determine org
+    # Step 0: Check sf CLI is installed
+    check_sf_cli()
+
+    # Step 1: Authenticate with Salesforce
     existing = {}
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH) as f:
             existing = json.load(f)
 
     default_org = existing.get("org") or get_default_org() or ""
+
+    if default_org:
+        login = input(f"  Already authenticated as {default_org}. Re-login? [y/N]: ").strip().lower()
+        if login in ("y", "yes"):
+            sf_login()
+            default_org = get_default_org() or default_org
+    else:
+        print("  You need to authenticate with Salesforce first.")
+        sf_login()
+        default_org = get_default_org() or ""
+
+    # Step 2: Confirm org
     org = input(f"  Salesforce org [{default_org}]: ").strip() or default_org
     if not org:
-        print("  No org specified. Run: sf config set target-org <username>")
+        print("  No org specified. Run: sf org login web")
         sys.exit(1)
 
-    # Step 2: Find the user
+    # Step 3: Find the user
     print(f"\n  Searching for your user in {org}...")
     name_search = input("  Your name (or part of it): ").strip()
     if not name_search:

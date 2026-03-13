@@ -18,10 +18,11 @@ Run the setup script to configure your Salesforce org and manager ID:
 ```
 
 This will:
-1. Ask for your Salesforce org (username)
-2. Search for your user by name
-3. Determine whether to use your ID or your manager's ID for team scoping
-4. Save everything to `config.json` (gitignored)
+1. Check that `sf` CLI is installed
+2. Authenticate with Salesforce via `sf org login web` (opens browser)
+3. Search for your user by name
+4. Determine whether to use your ID or your manager's ID for team scoping
+5. Save everything to `config.json` (gitignored)
 
 You can also create `config.json` manually from `config.example.json`.
 
