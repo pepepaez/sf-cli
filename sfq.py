@@ -1,11 +1,22 @@
 """Shared helpers for sf-cli tools."""
 
 import json
+import os
 import subprocess
 import sys
 import shutil
 
-ORG = "your.email@company.com"
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+
+def _load_org():
+    if os.path.exists(_CONFIG_PATH):
+        with open(_CONFIG_PATH) as f:
+            return json.load(f).get("org", "")
+    return ""
+
+
+ORG = _load_org()
 
 OPP_FIELDS = [
     "Account.Name",

@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Initial setup for sf-cli: find your user, resolve manager ID, write config."""
+
+import json
+import os
+import subprocess
+import sys
+
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+
+def sf_query(soql, org=None):
+    """Run a SOQL query via sf CLI."""
+    cmd = ["sf", "data", "query", "--query", soql, "--json"]
+    if org:
+        cmd += ["--target-org", org]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    data = json.loads(result.stdout)
+    records = data.get("result", {}).get("records", [])
+    return records
+
+
+def get_default_org():
+    """Get the default sf CLI org."""
+    result = subprocess.run(
+        ["sf", "config", "get", "target-org", "--json"],
+        capture_output=True, text=True)
+    if result.returncode == 0:
+        data = json.loads(result.stdout)
+        for item in data.get("result", []):
+            if item.get("name") == "target-org":
+                return item.get("value")
+    return None
+
+
+def main():
+    print("\n  sf-cli setup\n")
+
+    # Step 1: Determine org
+    existing = {}
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH) as f:
+            existing = json.load(f)
+
+    default_org = existing.get("org") or get_default_org() or ""
+    org = input(f"  Salesforce org [{default_org}]: ").strip() or default_org
+    if not org:
+        print("  No org specified. Run: sf config set target-org <username>")
+        sys.exit(1)
+
+    # Step 2: Find the user
+    print(f"\n  Searching for your user in {org}...")
+    name_search = input("  Your name (or part of it): ").strip()
+    if not name_search:
+        print("  No name provided.")
+        sys.exit(1)
+
+    records = sf_query(
+        f"SELECT Id, Name, ManagerId, Manager.Name, Email "
+        f"FROM User WHERE Name LIKE '%{name_search}%' AND IsActive = true",
+        org=org)
+
+    if not records:
+        print("  No users found.")
+        sys.exit(1)
+
+    # Filter out attributes
+    users = []
+    for r in records:
+        user = {
+            "Id": r.get("Id"),
+            "Name": r.get("Name"),
+            "Email": r.get("Email"),
+            "ManagerId": r.get("ManagerId"),
+            "ManagerName": (r.get("Manager") or {}).get("Name", ""),
+        }
+        users.append(user)
+
+    # If multiple matches, let user pick
+    if len(users) > 1:
+        print(f"\n  Found {len(users)} users:\n")
+        for i, u in enumerate(users):
+            print(f"    {i + 1}. {u['Name']} ({u['Email']})")
+        choice = input(f"\n  Select [1-{len(users)}]: ").strip()
+        try:
+            user = users[int(choice) - 1]
+        except (ValueError, IndexError):
+            print("  Invalid selection.")
+            sys.exit(1)
+    else:
+        user = users[0]
+
+    print(f"\n  User: {user['Name']} ({user['Email']})")
+    print(f"  Manager: {user['ManagerName']}")
+    print(f"  Manager ID: {user['ManagerId']}")
+
+    # Step 3: Ask if they are a manager (use own ID) or IC (use manager's ID)
+    print(f"\n  If you manage a team, your own ID will be used to scope pipeline")
+    print(f"  queries. Otherwise, your manager's ID is used.\n")
+    is_manager = input("  Are you a manager with direct reports? [y/N]: ").strip().lower()
+
+    if is_manager in ("y", "yes"):
+        manager_id = user["Id"]
+        print(f"\n  Using your ID: {manager_id}")
+    else:
+        manager_id = user["ManagerId"]
+        print(f"\n  Using your manager's ID: {manager_id}")
+
+    # Step 4: Write config
+    config = {
+        "org": org,
+        "manager_id": manager_id,
+        "user_id": user["Id"],
+        "user_name": user["Name"],
+    }
+
+    with open(CONFIG_PATH, "w") as f:
+        json.dump(config, f, indent=2)
+
+    print(f"\n  Config saved to {CONFIG_PATH}")
+    print(f"  You're all set!\n")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,4 +1,4 @@
-# sf-cli Guide
+# sf-cli
 
 Terminal tools for querying Salesforce. All commands use the `sf` CLI under the hood.
 
@@ -8,6 +8,22 @@ Terminal tools for querying Salesforce. All commands use the `sf` CLI under the 
 - `python3`
 - `fzf` — fuzzy selection (`brew install fzf`)
 - `vd` — VisiData, for interactive spreadsheet view (`brew install visidata`)
+
+## Setup
+
+Run the setup script to configure your Salesforce org and manager ID:
+
+```bash
+./sf-setup
+```
+
+This will:
+1. Ask for your Salesforce org (username)
+2. Search for your user by name
+3. Determine whether to use your ID or your manager's ID for team scoping
+4. Save everything to `config.json` (gitignored)
+
+You can also create `config.json` manually from `config.example.json`.
 
 ---
 

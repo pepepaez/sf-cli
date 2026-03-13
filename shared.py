@@ -16,6 +16,21 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sfq
 
+# --- Config ---
+
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+
+
+def load_config():
+    """Load config from config.json. Returns empty dict if missing."""
+    if os.path.exists(_CONFIG_PATH):
+        with open(_CONFIG_PATH) as f:
+            return json.load(f)
+    return {}
+
+
+_config = load_config()
+
 # --- Constants ---
 
 TYPE_LABELS = {"Up-sell and Retention": "Expansion"}
@@ -47,7 +62,7 @@ LIST_FIELD_MAP = {
     "Owner.Name": "Owner", "Solution_Strategist1__r.Name": "SS",
 }
 
-DEFAULT_MANAGER_ID = "YOUR_MANAGER_ID"
+DEFAULT_MANAGER_ID = _config.get("manager_id", "")
 DEAL_TYPES = ["New Business", "Up-sell and Retention"]
 QUARTER_HELP = "this, next, this+next (default: this+next)"
 

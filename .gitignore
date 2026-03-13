@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 *.cast
 .claude/
+config.json
