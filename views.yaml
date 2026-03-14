@@ -1,5 +1,5 @@
-# Saved views for sf-opps
-# Usage: sf-opps -v <name>
+# Saved views for sf_opps
+# Usage: sf_opps -v <name>
 # CLI flags override view settings
 #
 # Filters:

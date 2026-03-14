@@ -1,4 +1,4 @@
-"""Generic data transforms for sf-report."""
+"""Generic data transforms for sf_report."""
 
 from collections import defaultdict
 import sys

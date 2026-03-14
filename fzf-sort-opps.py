@@ -5,7 +5,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from shared import format_table_lines, LIST_FIELD_MAP, to_float
+from shared import format_table_lines, LIST_FIELD_MAP, quarter_from_date, to_float
 
 LABEL_TO_KEY = {
     "Account": "Account.Name",
@@ -13,6 +13,7 @@ LABEL_TO_KEY = {
     "ACV": "Amount",
     "Stage": "StageName",
     "Type": "Type",
+    "Qtr": "_quarter",
     "Close Date": "CloseDate",
     "Owner": "Owner.Name",
     "SS": "Solution_Strategist1__r.Name",
@@ -46,9 +47,10 @@ opps.sort(key=sort_val, reverse=reverse)
 with open(data_file, "w") as f:
     json.dump(opps, f)
 
-# Enrich for format_table_lines (_acv needed)
+# Enrich for format_table_lines
 for r in opps:
     r["_acv"] = to_float(r.get("Amount", ""))
+    r["_quarter"] = r.get("_quarter") or quarter_from_date(r.get("CloseDate", ""))
 
 header, sep, lines = format_table_lines(opps, LIST_FIELD_MAP)
 print(f"____\t{header}")

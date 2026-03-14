@@ -46,12 +46,12 @@ You can also create `config.json` manually from `config.example.json`.
 
 ## Commands
 
-### sf-opps — Search, browse, and aggregate opportunities
+### sf_opps — Search, browse, and aggregate opportunities
 
 The primary tool. Search with flexible filters, browse results interactively, toggle to aggregated views, and save queries as named views.
 
 ```
-sf-opps [options]
+sf_opps [options]
 ```
 
 | Option | Description |
@@ -106,21 +106,21 @@ All filters combine with AND. At least one filter is required. `deal_types` from
 **Examples:**
 
 ```bash
-sf-opps -a Volvo                              # Search by account
-sf-opps -n Justin                             # All opps for a Solution Strategist
-sf-opps -n none -q this                       # Unassigned opps this quarter
-sf-opps --ae Todd -q this                     # Todd's opps this quarter
-sf-opps -a PPG -s Closing                     # PPG opps in closing stage
-sf-opps -s "3. Value Proposal" "4. Closing"   # Multiple stages (exact match)
-sf-opps -t new                                # Fuzzy match on type
-sf-opps --team                                # Your team's pipeline
-sf-opps --team -q this                        # Your team, current quarter
-sf-opps -r NA -q this+next                    # North America, this+next quarter
-sf-opps -r NA EU                              # Multiple territories
-sf-opps -n Meredith --vd                      # Open in VisiData
-sf-opps -a Ford --out ford.csv                # Save to CSV
-sf-opps -v pipeline                           # Use a saved view
-sf-opps -v closing -q next                    # Saved view with quarter override
+sf_opps -a Volvo                              # Search by account
+sf_opps -n Justin                             # All opps for a Solution Strategist
+sf_opps -n none -q this                       # Unassigned opps this quarter
+sf_opps --ae Todd -q this                     # Todd's opps this quarter
+sf_opps -a PPG -s Closing                     # PPG opps in closing stage
+sf_opps -s "3. Value Proposal" "4. Closing"   # Multiple stages (exact match)
+sf_opps -t new                                # Fuzzy match on type
+sf_opps --team                                # Your team's pipeline
+sf_opps --team -q this                        # Your team, current quarter
+sf_opps -r NA -q this+next                    # North America, this+next quarter
+sf_opps -r NA EU                              # Multiple territories
+sf_opps -n Meredith --vd                      # Open in VisiData
+sf_opps -a Ford --out ford.csv                # Save to CSV
+sf_opps -v pipeline                           # Use a saved view
+sf_opps -v closing -q next                    # Saved view with quarter override
 ```
 
 ---
@@ -158,18 +158,18 @@ newbiz:
 - `ninja: none` matches opps with no Solution Strategist
 - Territory supports aliases: `territory: [NA]`
 
-CLI flags override view settings: `sf-opps -v pipeline -q this`
+CLI flags override view settings: `sf_opps -v pipeline -q this`
 
 You can also save views interactively with `ctrl-v` from any fzf view.
 
 ---
 
-### sf-report — Run predefined reports
+### sf_report — Run predefined reports
 
 Run JSON-defined reports from the `reports/` directory with optional transforms.
 
 ```
-sf-report [report-name] [options]
+sf_report [report-name] [options]
 ```
 
 | Option | Description |
@@ -183,9 +183,9 @@ sf-report [report-name] [options]
 **Example:**
 
 ```bash
-sf-report                          # Pick report interactively
-sf-report open-opps                # Run the open-opps report
-sf-report --list                   # List available reports
+sf_report                          # Pick report interactively
+sf_report open-opps                # Run the open-opps report
+sf_report --list                   # List available reports
 ```
 
 ---
@@ -193,10 +193,10 @@ sf-report --list                   # List available reports
 ## Workflow
 
 ```bash
-sf-opps --team                      # Team pipeline, drill down with aggregation
-sf-opps -a Volvo                    # Search by account, browse opps
-sf-opps -n Justin -q this           # SS opps this quarter
-sf-opps -v closing                  # Saved view: deals near closing
+sf_opps --team                      # Team pipeline, drill down with aggregation
+sf_opps -a Volvo                    # Search by account, browse opps
+sf_opps -n Justin -q this           # SS opps this quarter
+sf_opps -v closing                  # Saved view: deals near closing
 ```
 
 The interactive opp list shows a preview pane with full detail card + chatter (side by side). From any opp list, `ctrl-g` toggles to a grouped view with dimension toggles (Type, Quarter, Stage, Solution Strategist). Enter on a group drills into its opportunities.

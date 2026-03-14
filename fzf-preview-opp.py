@@ -114,11 +114,25 @@ def build_chatter_lines(opp_id, width):
         age_days = days_since(date)
         age_str = fmt_duration(age_days) + " ago" if age_days is not None else ""
 
+        # Color-code age: green ≤7d, yellow 8-14d, red >14d
+        if age_days is not None and age_str:
+            BG_GREEN = "\033[42;30m"   # green bg, black fg
+            BG_YELLOW = "\033[43;30m"  # yellow bg, black fg
+            BG_RED = "\033[41;30m"     # red bg, black fg
+            if age_days <= 7:
+                age_styled = c(f" {age_str} ", BG_GREEN)
+            elif age_days <= 14:
+                age_styled = c(f" {age_str} ", BG_YELLOW)
+            else:
+                age_styled = c(f" {age_str} ", BG_RED)
+        else:
+            age_styled = ""
+
         if is_ninja:
             tag = c(" NINJA UPDATE ", BOLD, YELLOW)
-            lines.append(f"  {c(author, BOLD, CYAN)}  {c('•', DIM)}  {c(date, DIM)}  {c(age_str, DIM)}  {tag}")
+            lines.append(f"  {c(author, BOLD, CYAN)}  {c('•', DIM)}  {c(date, DIM)}  {age_styled}  {tag}")
         else:
-            lines.append(f"  {c(author, BOLD, CYAN)}  {c('•', DIM)}  {c(date, DIM)}  {c(age_str, DIM)}")
+            lines.append(f"  {c(author, BOLD, CYAN)}  {c('•', DIM)}  {c(date, DIM)}  {age_styled}")
         lines.append("")
 
         body_pad = " " * body_indent

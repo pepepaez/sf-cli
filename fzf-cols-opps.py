@@ -5,7 +5,7 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from shared import format_table_lines, to_float
+from shared import format_table_lines, quarter_from_date, to_float
 
 # All available columns in display order
 ALL_COLS = [
@@ -14,6 +14,7 @@ ALL_COLS = [
     ("Amount", "ACV (EUR)"),
     ("StageName", "Stage"),
     ("Type", "Type"),
+    ("_quarter", "Qtr"),
     ("CloseDate", "Close"),
     ("Owner.Name", "Owner"),
     ("Solution_Strategist1__r.Name", "SS"),
@@ -44,6 +45,7 @@ with open(data_file) as f:
 
 for r in opps:
     r["_acv"] = to_float(r.get("Amount", ""))
+    r["_quarter"] = r.get("_quarter") or quarter_from_date(r.get("CloseDate", ""))
 
 header, sep, lines = format_table_lines(opps, field_map)
 print(f"____\t{header}")

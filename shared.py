@@ -58,7 +58,7 @@ DETAIL_MAP = {
 
 LIST_FIELD_MAP = {
     "Account.Name": "Account", "Name": "Opportunity", "Amount": "ACV (EUR)",
-    "StageName": "Stage", "Type": "Type", "CloseDate": "Close",
+    "StageName": "Stage", "Type": "Type", "_quarter": "Qtr", "CloseDate": "Close",
     "Owner.Name": "Owner", "Solution_Strategist1__r.Name": "SS",
 }
 
@@ -407,7 +407,7 @@ def opp_list_view(opps, context="", filters=None):
         tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         preview_data = []
         for r in opps:
-            row = {k: v for k, v in r.items() if not k.startswith("_")}
+            row = {k: v for k, v in r.items() if not k.startswith("_") or k == "_quarter"}
             preview_data.append(row)
         json.dump(preview_data, tmp)
         tmp.close()
