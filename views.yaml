@@ -46,3 +46,11 @@ expansions:
   team: true
   quarter: this+next
   type: Up-sell and Retention
+
+justin_expansion:
+  ninja: justin
+  type: expansion
+
+exp_radha:
+  ninja: radha
+  type: expansion

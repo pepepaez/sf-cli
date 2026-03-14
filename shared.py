@@ -392,13 +392,15 @@ def fetch_chatter(opp_id):
 
 # --- Interactive views ---
 
-def opp_list_view(opps, context=""):
+def opp_list_view(opps, context="", filters=None):
     """Interactive list of opportunities with full detail + chatter in preview pane.
 
     ctrl-g toggles to grouped/aggregated view.
+    ctrl-v saves current filters as a named view.
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
     preview_script = os.path.join(script_dir, "fzf-preview-opp.py")
+    save_script = os.path.join(script_dir, "fzf-save-view.py")
 
     while True:
         # Write all record data to temp file for preview
@@ -425,7 +427,8 @@ def opp_list_view(opps, context=""):
                          f"{DIM}ctrl-/{RESET} resize  "
                          f"{DIM}ctrl-s{RESET} sort  "
                          f"{DIM}ctrl-x{RESET} columns  "
-                         f"{DIM}ctrl-g{RESET} group")
+                         f"{DIM}ctrl-g{RESET} group  "
+                         f"{DIM}ctrl-v{RESET} save view")
             fzf_header = (f"{help_line}\n"
                           f"{DIM}{context}{RESET}\n"
                           f"{BOLD}{CYAN}{fmt_eur(total_acv)}{RESET} | {len(opps)} opps")
@@ -451,6 +454,18 @@ def opp_list_view(opps, context=""):
             )
             cols_reload = f"reload(python3 {cols_script} {tmp.name} {cols_choice_file})"
 
+            # Save view: write filters to temp, prompt for name, save
+            filters_file = tmp.name + ".filters"
+            if filters:
+                with open(filters_file, "w") as ff:
+                    json.dump(filters, ff)
+            view_name_file = tmp.name + ".viewname"
+            save_view_cmd = (
+                f"execute(echo '' | fzf --prompt 'View name: ' --print-query --height 5 --reverse"
+                f" | head -1 > {view_name_file}"
+                f" && python3 {save_script} {filters_file} {view_name_file})"
+            )
+
             preview_cmd = f"python3 {preview_script} {tmp.name} {{1}}"
             cmd = ["fzf", "--prompt", "Opps > ", "--height", "90%", "--reverse",
                    "--no-sort", "--ansi", "--delimiter", "\t", "--with-nth", "2..",
@@ -462,6 +477,7 @@ def opp_list_view(opps, context=""):
                    "--bind", "left:preview-up",
                    "--bind", f"ctrl-s:{sort_picker}+{sort_reload}",
                    "--bind", f"ctrl-x:{cols_picker}+{cols_reload}",
+                   "--bind", f"ctrl-v:{save_view_cmd}",
                    "--bind", "ctrl-/:change-preview-window(bottom,60%|bottom,50%|bottom,40%|bottom,25%|hidden)",
                    "--header", fzf_header]
 
@@ -478,7 +494,7 @@ def opp_list_view(opps, context=""):
         key_pressed = output_lines[0] if output_lines else ""
 
         if key_pressed == "ctrl-g":
-            grouped_view(opps, context)
+            grouped_view(opps, context, filters=filters)
             continue  # back to list view after grouped view exits
         return
 
@@ -504,10 +520,11 @@ def aggregate_report(records, dim_keys):
     return rows
 
 
-def grouped_view(records, context=""):
+def grouped_view(records, context="", filters=None):
     """Aggregated/grouped view with dimension toggles and drill-down."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     preview_script = os.path.join(script_dir, "fzf-preview-pipeline.py")
+    save_script = os.path.join(script_dir, "fzf-save-view.py")
     dims = list(DEFAULT_DIMS)
 
     while True:
@@ -562,10 +579,23 @@ def grouped_view(records, context=""):
                          f"{DIM}Enter{RESET} toggle/drill-down  "
                          f"{DIM}←/→{RESET} scroll preview  "
                          f"{DIM}ctrl-/{RESET} resize  "
-                         f"{DIM}ctrl-g{RESET} flat list")
+                         f"{DIM}ctrl-g{RESET} flat list  "
+                         f"{DIM}ctrl-v{RESET} save view")
             fzf_header = (f"{help_line}\n"
                           f"{DIM}{context}{RESET}\n"
                           f"{BOLD}{CYAN}Total: {fmt_eur(total_acv)}{RESET}  |  {len(records)} opps")
+
+            # Save view
+            filters_file = tmp.name + ".filters"
+            if filters:
+                with open(filters_file, "w") as ff:
+                    json.dump(filters, ff)
+            view_name_file = tmp.name + ".viewname"
+            save_view_cmd = (
+                f"execute(echo '' | fzf --prompt 'View name: ' --print-query --height 5 --reverse"
+                f" | head -1 > {view_name_file}"
+                f" && python3 {save_script} {filters_file} {view_name_file})"
+            )
 
             dims_arg = ",".join(dims)
             preview_cmd = f"python3 {preview_script} {tmp.name} {{1}} {dims_arg}"
@@ -576,6 +606,7 @@ def grouped_view(records, context=""):
                    "--preview", preview_cmd, "--preview-window", "right:50%:wrap",
                    "--bind", "right:preview-down",
                    "--bind", "left:preview-up",
+                   "--bind", f"ctrl-v:{save_view_cmd}",
                    "--bind", "ctrl-/:change-preview-window(right,70%,wrap|right,50%,wrap|right,30%,wrap|hidden)"]
             result = subprocess.run(cmd + ["--header", fzf_header],
                                     input="\n".join(fzf_items),
@@ -614,7 +645,7 @@ def grouped_view(records, context=""):
             try:
                 idx = int(prefix[1:])
                 drill_context = lines[idx].rstrip()
-                opp_list_view(agg_rows[idx]["_opps"], drill_context)
+                opp_list_view(agg_rows[idx]["_opps"], drill_context, filters=filters)
             except (ValueError, IndexError):
                 pass
             continue

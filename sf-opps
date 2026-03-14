@@ -143,14 +143,16 @@ def load_views():
 
 def apply_view(args, view):
     """Apply a saved view's settings to args (CLI flags take precedence)."""
+    # Fields that argparse nargs="+" always stores as lists
+    list_fields = {"type", "stage", "territory"}
     for key, val in view.items():
         if key == "team" and val is True:
             if args.team is None:
                 args.team = DEFAULT_MANAGER_ID
-        elif key == "territory" and isinstance(val, list):
-            if not args.territory:
-                args.territory = val
         elif not getattr(args, key, None):
+            # Wrap single strings in a list for nargs="+" fields
+            if key in list_fields and isinstance(val, str):
+                val = [val]
             setattr(args, key, val)
 
 
@@ -228,8 +230,27 @@ def main():
         dump_output(records, args.out)
         return
 
+    # Build filters dict for saving views
+    filters = {}
+    if args.team:
+        filters["team"] = True if args.team == DEFAULT_MANAGER_ID else args.team
+    if args.account:
+        filters["account"] = args.account
+    if args.ae:
+        filters["ae"] = args.ae
+    if args.ninja:
+        filters["ninja"] = args.ninja
+    if args.quarter:
+        filters["quarter"] = args.quarter
+    if args.type:
+        filters["type"] = args.type if len(args.type) > 1 else args.type[0]
+    if args.stage:
+        filters["stage"] = args.stage if len(args.stage) > 1 else args.stage[0]
+    if args.territory:
+        filters["territory"] = args.territory
+
     # Interactive: always start in flat list, ctrl-g to toggle grouped view
-    opp_list_view(records, filter_summary)
+    opp_list_view(records, filter_summary, filters=filters)
 
 
 if __name__ == "__main__":
