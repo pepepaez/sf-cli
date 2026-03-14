@@ -293,8 +293,13 @@ def fzf(items, prompt="", header="", multi=False):
     return selected
 
 
-def format_table_lines(records, field_map):
-    """Format records as table lines and return (header, separator, rows)."""
+def format_table_lines(records, field_map, group_cols=0):
+    """Format records as table lines and return (header, separator, rows).
+
+    group_cols: number of leading columns to group — repeated values
+    in those columns are blanked out for cleaner display. The underlying
+    data is unchanged so drill-down still works.
+    """
     if not records:
         return "", "", []
     keys = list(field_map.keys())
@@ -308,7 +313,19 @@ def format_table_lines(records, field_map):
             widths[i] = max(widths[i], len(val))
     header_line = "  ".join(h.ljust(w) for h, w in zip(headers, widths))
     sep_line = "  ".join("-" * w for w in widths)
-    row_lines = ["  ".join(val.ljust(w) for val, w in zip(row, widths)) for row in rows_data]
+
+    row_lines = []
+    prev = [None] * len(keys)
+    for row in rows_data:
+        display = list(row)
+        for i in range(min(group_cols, len(keys))):
+            if display[i] == prev[i]:
+                display[i] = ""
+            else:
+                break  # stop blanking once a column differs
+        prev = list(row)
+        row_lines.append("  ".join(val.ljust(w) for val, w in zip(display, widths)))
+
     return header_line, sep_line, row_lines
 
 
@@ -379,11 +396,12 @@ def opp_list_view(opps, context=""):
         total_acv = sum(r["_acv"] for r in opps)
         header, sep, lines = format_table_lines(opps, LIST_FIELD_MAP)
 
-        numbered_lines = [f"{i:04d} {line}" for i, line in enumerate(lines)]
+        TAB = "\t"
+        numbered_lines = [f"{i:04d}{TAB}{line}" for i, line in enumerate(lines)]
 
         # Use dummy prefix on header/sep so --with-nth 2.. aligns them with data
-        col_header = f"____ {header}"
-        col_sep = f"____ {sep}"
+        col_header = f"____{TAB}{header}"
+        col_sep = f"____{TAB}{sep}"
 
         help_line = (f"\033[2mESC\033[0m back  "
                      f"\033[2m←/→\033[0m scroll preview  "
@@ -396,7 +414,7 @@ def opp_list_view(opps, context=""):
 
         preview_cmd = f"python3 {preview_script} {tmp.name} {{1}}"
         cmd = ["fzf", "--prompt", "Opps > ", "--height", "90%", "--reverse",
-               "--no-sort", "--ansi", "--with-nth", "2..",
+               "--no-sort", "--ansi", "--delimiter", "\t", "--with-nth", "2..",
                "--header-lines", "2",
                "--preview", preview_cmd, "--preview-window", "right:50%:wrap",
                "--bind", "enter:ignore",
