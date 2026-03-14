@@ -397,10 +397,13 @@ def opp_list_view(opps, context="", filters=None):
 
     ctrl-g toggles to grouped/aggregated view.
     ctrl-v saves current filters as a named view.
+    ctrl-n captures a session note for the selected opp.
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
     preview_script = os.path.join(script_dir, "fzf-preview-opp.py")
     save_script = os.path.join(script_dir, "fzf-save-view.py")
+    note_script = os.path.join(script_dir, "fzf-note-opp.py")
+    notes_file = os.path.join(tempfile.gettempdir(), f"sf_notes_{os.getpid()}.json")
 
     while True:
         # Write all record data to temp file for preview
@@ -428,6 +431,7 @@ def opp_list_view(opps, context="", filters=None):
                          f"{DIM}ctrl-s{RESET} sort  "
                          f"{DIM}ctrl-x{RESET} columns  "
                          f"{DIM}ctrl-g{RESET} group  "
+                         f"{DIM}ctrl-n{RESET} note  "
                          f"{DIM}ctrl-v{RESET} save view")
             fzf_header = (f"{help_line}\n"
                           f"{DIM}{context}{RESET}\n"
@@ -466,7 +470,13 @@ def opp_list_view(opps, context="", filters=None):
                 f" && python3 {save_script} {filters_file} {view_name_file})"
             )
 
-            preview_cmd = f"python3 {preview_script} {tmp.name} {{1}}"
+            # Note capture
+            note_cmd = (
+                f"execute(python3 {note_script} {notes_file} {tmp.name} {{1}})"
+                f"+refresh-preview"
+            )
+
+            preview_cmd = f"python3 {preview_script} {tmp.name} {{1}} {notes_file}"
             cmd = ["fzf", "--prompt", "Opps > ", "--height", "90%", "--reverse",
                    "--no-sort", "--ansi", "--delimiter", "\t", "--with-nth", "2..",
                    "--header-lines", "2", "--no-hscroll", "--ellipsis", "",
@@ -477,6 +487,7 @@ def opp_list_view(opps, context="", filters=None):
                    "--bind", "left:preview-up",
                    "--bind", f"ctrl-s:{sort_picker}+{sort_reload}",
                    "--bind", f"ctrl-x:{cols_picker}+{cols_reload}",
+                   "--bind", f"ctrl-n:{note_cmd}",
                    "--bind", f"ctrl-v:{save_view_cmd}",
                    "--bind", "ctrl-/:change-preview-window(bottom,60%|bottom,50%|bottom,40%|bottom,25%|hidden)",
                    "--header", fzf_header]
@@ -487,6 +498,8 @@ def opp_list_view(opps, context="", filters=None):
             os.unlink(tmp.name)
 
         if result.returncode != 0:
+            # On exit, check for session notes and offer CSV export
+            _export_session_notes(notes_file, opps)
             return
 
         # --expect outputs key on first line (empty for Enter)
@@ -496,7 +509,97 @@ def opp_list_view(opps, context="", filters=None):
         if key_pressed == "ctrl-g":
             grouped_view(opps, context, filters=filters)
             continue  # back to list view after grouped view exits
+        _export_session_notes(notes_file, opps)
         return
+
+
+def _export_session_notes(notes_file, opps):
+    """If session notes exist, offer to export as CSV and save to history JSON."""
+    if not os.path.exists(notes_file):
+        return
+    try:
+        with open(notes_file) as f:
+            notes = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return
+    if not notes:
+        return
+
+    # Build lookup
+    opp_lookup = {}
+    for r in opps:
+        opp_id = r.get("Id", "")
+        if opp_id:
+            opp_lookup[opp_id] = r
+
+    noted_count = len(notes)
+    print(f"\n  {BOLD}{YELLOW}{noted_count} session note(s) captured.{RESET}")
+    answer = input(f"  Save to CSV? (y/n): ").strip().lower()
+    if answer in ("y", "yes"):
+        # Ask for filename
+        default_name = "session_notes.csv"
+        fname = input(f"  Filename [{default_name}]: ").strip() or default_name
+        if not fname.endswith(".csv"):
+            fname += ".csv"
+
+        import csv
+        csv_fields = ["Account", "Opportunity", "ACV", "Stage", "Type", "Quarter",
+                       "Close Date", "Owner", "SS",
+                       "Status", "Activity", "Current Status", "Next Steps", "Risks"]
+        with open(fname, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=csv_fields)
+            writer.writeheader()
+            for opp_id, note in notes.items():
+                r = opp_lookup.get(opp_id, {})
+                writer.writerow({
+                    "Account": r.get("Account.Name", ""),
+                    "Opportunity": r.get("Name", ""),
+                    "ACV": r.get("Amount", ""),
+                    "Stage": r.get("StageName", ""),
+                    "Type": remap_type(r.get("Type", "") or ""),
+                    "Quarter": r.get("_quarter", ""),
+                    "Close Date": r.get("CloseDate", ""),
+                    "Owner": r.get("Owner.Name", ""),
+                    "SS": r.get("Solution_Strategist1__r.Name", ""),
+                    "Status": note.get("status", ""),
+                    "Activity": note.get("activity", ""),
+                    "Current Status": note.get("current_status", ""),
+                    "Next Steps": note.get("next_steps", ""),
+                    "Risks": note.get("risks", ""),
+                })
+        print(f"  {GREEN}Saved to {fname}{RESET}")
+
+    # Always save to history JSON
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    history_file = os.path.join(script_dir, "notes_history.json")
+    history = []
+    if os.path.exists(history_file):
+        try:
+            with open(history_file) as f:
+                history = json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            pass
+
+    from datetime import datetime
+    session_entry = {
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "notes": {}
+    }
+    for opp_id, note in notes.items():
+        r = opp_lookup.get(opp_id, {})
+        session_entry["notes"][opp_id] = {
+            "account": r.get("Account.Name", ""),
+            "opportunity": r.get("Name", ""),
+            **note,
+        }
+    history.append(session_entry)
+
+    with open(history_file, "w") as f:
+        json.dump(history, f, indent=2)
+    print(f"  {DIM}History saved to notes_history.json{RESET}")
+
+    # Clean up temp
+    os.unlink(notes_file)
 
 
 def aggregate_report(records, dim_keys):

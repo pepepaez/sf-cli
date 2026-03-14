@@ -3,3 +3,5 @@ __pycache__/
 *.cast
 .claude/
 config.json
+notes_history.json
+session_notes*.csv

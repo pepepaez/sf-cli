@@ -167,6 +167,51 @@ def merge_side_by_side(left_lines, right_lines, left_width, sep="│"):
     return merged
 
 
+def build_note_lines(note, width):
+    """Build session note display lines."""
+    BG_CYAN = "\033[46;30m"  # cyan bg, black fg
+    lines = []
+    lines.append("")
+    lines.append(f"  {c(' SESSION NOTE ', BG_CYAN, BOLD)}")
+    lines.append("")
+
+    fields = [
+        ("Status", note.get("status", "")),
+        ("Activity", note.get("activity", "")),
+        ("Current Status", note.get("current_status", "")),
+        ("Next Steps", note.get("next_steps", "")),
+        ("Risks", note.get("risks", "")),
+    ]
+
+    max_label = max(len(f[0]) for f in fields)
+    value_width = max(width - max_label - 6, 10)
+
+    for label, value in fields:
+        if not value:
+            continue
+        label_str = c(f"{label:>{max_label}}", DIM)
+        if label == "Status":
+            val_color = (GREEN,) if value == "Active" else (DIM,)
+            val_str = c(value, BOLD, *val_color)
+        elif label == "Activity":
+            val_str = c(value, BOLD, CYAN)
+        elif label == "Risks":
+            val_str = c(value, BOLD, "\033[38;2;251;73;52m")  # red
+        else:
+            val_str = value
+        # Wrap long values
+        if len(value) > value_width:
+            wrapped = textwrap.wrap(value, width=value_width)
+            lines.append(f"  {label_str}  {c(wrapped[0], BOLD) if label in ('Current Status', 'Next Steps') else wrapped[0]}")
+            indent = " " * (max_label + 4)
+            for wl in wrapped[1:]:
+                lines.append(f"  {indent}{wl}")
+        else:
+            lines.append(f"  {label_str}  {val_str}")
+
+    return lines
+
+
 def main():
     if len(sys.argv) < 3:
         return
@@ -176,6 +221,8 @@ def main():
         line_idx = int(sys.argv[2])
     except ValueError:
         return
+
+    notes_file = sys.argv[3] if len(sys.argv) > 3 else None
 
     with open(data_file) as f:
         records = json.load(f)
@@ -190,6 +237,17 @@ def main():
     r["Type"] = remap_type(r.get("Type", "") or "")
     enrich_detail(r)
 
+    # Load session notes
+    opp_id = r.get("Id", "")
+    session_note = None
+    if notes_file and opp_id:
+        try:
+            with open(notes_file) as f:
+                notes = json.load(f)
+            session_note = notes.get(opp_id)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+
     # Split width: left half for detail, right half for chatter
     left_width = total_width // 2 - 2
     right_width = total_width - left_width - 3  # 3 for separator
@@ -197,8 +255,11 @@ def main():
     # Build detail card
     card_lines = build_card_lines(r, left_width)
 
+    # Add session note below detail card if present
+    if session_note:
+        card_lines.extend(build_note_lines(session_note, left_width))
+
     # Fetch chatter
-    opp_id = r.get("Id", "")
     if opp_id:
         chatter_lines = build_chatter_lines(opp_id, right_width)
     else:
