@@ -1,0 +1,48 @@
+# Saved views for sf-opps
+# Usage: sf-opps -v <name>
+# CLI flags override view settings
+#
+# Filters:
+#   team: true                          # your team (from config)
+#   quarter: this+next                  # this, next, this+next, Q32026, etc.
+#   account: Volvo                      # fuzzy match
+#   ae: Todd                            # fuzzy match
+#   ninja: none                         # "none" = unassigned, otherwise fuzzy
+#   type: New Business                  # single value
+#   type: [New Business, Expansion]     # multiple values (IN query)
+#   stage: "4. Closing"                 # single value (fuzzy LIKE)
+#   stage: ["3. Value Proposal", "4. Closing"]  # multiple (exact IN)
+#   territory: [North America]          # list of territories
+
+# Full team pipeline
+pipeline:
+  team: true
+  quarter: this+next
+# Opps without a ninja — needs staffing
+unassigned:
+  quarter: this+next
+  ninja: none
+  territory: [North America]
+
+# Late-stage deals this quarter — needs push
+closing:
+  team: true
+  quarter: this
+  stage: ["3. Value Proposal", "4. Closing"]
+
+# Next quarter early stage — planning ahead
+upcoming:
+  team: true
+  quarter: next
+
+# New business only
+newbiz:
+  team: true
+  quarter: this+next
+  type: New Business
+
+# Expansions only
+expansions:
+  team: true
+  quarter: this+next
+  type: Up-sell and Retention

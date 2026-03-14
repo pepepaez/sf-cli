@@ -76,6 +76,10 @@ def main():
 
     width = get_term_width()
 
+    # Max column widths
+    max_widths = {"Account.Name": 25, "Name": 30, "Owner.Name": 14,
+                  "Solution_Strategist1__r.Name": 14}
+
     # Compute column widths
     widths = [len(h) for h in headers]
     rows_data = []
@@ -84,6 +88,11 @@ def main():
         rows_data.append(row)
         for i, val in enumerate(row):
             widths[i] = max(widths[i], len(val))
+
+    # Apply per-column caps
+    for i, k in enumerate(keys):
+        if k in max_widths:
+            widths[i] = min(widths[i], max_widths[k])
 
     # Cap total width — truncate last columns if needed
     sep = "  "
@@ -98,9 +107,7 @@ def main():
                 break
 
     def truncate(val, w):
-        if len(val) > w:
-            return val[:w - 2] + ".." if w > 2 else val[:w]
-        return val
+        return val[:w-1] + "…" if len(val) > w else val
 
     # Print header
     header_line = sep.join(c(h.ljust(w), DIM) for h, w in zip(headers, widths))

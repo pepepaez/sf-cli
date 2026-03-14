@@ -8,9 +8,12 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sfq
 from shared import (
-    DEAL_TYPES, LIST_FIELD_MAP, QUARTER_HELP,
+    BOLD, RESET, YELLOW,
+    DEAL_TYPES, DEFAULT_MANAGER_ID, DEFAULT_TERRITORIES, LIST_FIELD_MAP,
+    QUARTER_HELP,
     build_quarter_clause, dump_output, enrich, escape_soql,
-    fmt_eur, fzf, format_table_lines, opp_list_view, remap_type, to_float,
+    fmt_eur, fzf, format_table_lines, grouped_view, opp_list_view,
+    remap_type, to_float,
 )
 
 OPP_FIELDS = (
@@ -33,16 +36,41 @@ def build_query(args):
         conditions.append(f"Owner.Name LIKE '%{escape_soql(args.ae)}%'")
 
     if args.ninja:
-        conditions.append(f"Solution_Strategist1__r.Name LIKE '%{escape_soql(args.ninja)}%'")
+        if args.ninja.lower() == "none":
+            conditions.append("Solution_Strategist1__r.Name = null")
+        else:
+            conditions.append(f"Solution_Strategist1__r.Name LIKE '%{escape_soql(args.ninja)}%'")
 
     if args.quarter:
         conditions.append(build_quarter_clause(args.quarter))
 
     if args.type:
-        conditions.append(f"Type = '{escape_soql(args.type)}'")
+        if len(args.type) > 1:
+            quoted = ", ".join(f"'{escape_soql(t)}'" for t in args.type)
+            conditions.append(f"Type IN ({quoted})")
+        else:
+            conditions.append(f"Type LIKE '%{escape_soql(args.type[0])}%'")
 
     if args.stage:
-        conditions.append(f"StageName LIKE '%{escape_soql(args.stage)}%'")
+        if len(args.stage) > 1:
+            quoted = ", ".join(f"'{escape_soql(s)}'" for s in args.stage)
+            conditions.append(f"StageName IN ({quoted})")
+        else:
+            conditions.append(f"StageName LIKE '%{escape_soql(args.stage[0])}%'")
+
+    if args.team:
+        manager_id = args.team
+        conditions.append(
+            f"(Solution_Strategist1__r.ManagerId = '{manager_id}' "
+            f"OR Solution_Strategist1__r.Id = '{manager_id}')"
+        )
+
+    # Territory filter (only when explicitly set)
+    territory_aliases = {"NA": "North America", "EU": "Europe"}
+    if args.territory:
+        resolved = [territory_aliases.get(t.upper(), t) for t in args.territory]
+        quoted = ", ".join(f"'{escape_soql(t)}'" for t in resolved)
+        conditions.append(f"Territory__c IN ({quoted})")
 
     where = " AND ".join(conditions)
     return (
@@ -55,6 +83,8 @@ def build_query(args):
 def build_filter_summary(args):
     """Build a human-readable summary of active filters."""
     parts = []
+    if args.team:
+        parts.append("team")
     if args.account:
         parts.append(f"account=\"{args.account}\"")
     if args.ae:
@@ -64,15 +94,71 @@ def build_filter_summary(args):
     if args.quarter:
         parts.append(f"quarter={args.quarter}")
     if args.type:
-        parts.append(f"type=\"{args.type}\"")
+        types = args.type if isinstance(args.type, list) else [args.type]
+        parts.append(f"type={','.join(types)}")
     if args.stage:
-        parts.append(f"stage=\"{args.stage}\"")
+        stages = args.stage if isinstance(args.stage, list) else [args.stage]
+        parts.append(f"stage={','.join(stages)}")
+    if args.territory:
+        parts.append(f"territory={','.join(args.territory)}")
     return ", ".join(parts) if parts else "all open"
+
+
+def load_views():
+    """Load saved views from views.yaml."""
+    views_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "views.yaml")
+    if not os.path.exists(views_path):
+        return {}
+    try:
+        import yaml
+    except ImportError:
+        # Fallback: simple yaml parsing for flat key-value views
+        views = {}
+        current = None
+        with open(views_path) as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if not line.startswith(" ") and stripped.endswith(":"):
+                    current = stripped[:-1]
+                    views[current] = {}
+                elif current and ":" in stripped:
+                    key, val = stripped.split(":", 1)
+                    val = val.strip()
+                    # Parse yaml-like values
+                    if val.startswith("[") and val.endswith("]"):
+                        val = [v.strip().strip("'\"") for v in val[1:-1].split(",")]
+                    elif val.lower() == "true":
+                        val = True
+                    elif val.lower() == "false":
+                        val = False
+                    elif val.startswith('"') and val.endswith('"'):
+                        val = val[1:-1]
+                    views[current][key.strip()] = val
+        return views
+    with open(views_path) as f:
+        return yaml.safe_load(f) or {}
+
+
+def apply_view(args, view):
+    """Apply a saved view's settings to args (CLI flags take precedence)."""
+    for key, val in view.items():
+        if key == "team" and val is True:
+            if args.team is None:
+                args.team = DEFAULT_MANAGER_ID
+        elif key == "territory" and isinstance(val, list):
+            if not args.territory:
+                args.territory = val
+        elif not getattr(args, key, None):
+            setattr(args, key, val)
 
 
 def main():
     parser = argparse.ArgumentParser(
         description="Search and browse opportunities with filters")
+    parser.add_argument("--view", "-v", metavar="NAME",
+                        help="Use a saved view from views.yaml")
     parser.add_argument("--account", "-a", metavar="NAME",
                         help="Filter by account name (fuzzy)")
     parser.add_argument("--ae", metavar="NAME",
@@ -81,28 +167,55 @@ def main():
                         help="Filter by Solution Strategist (fuzzy)")
     parser.add_argument("--quarter", "-q", metavar="QUARTER",
                         help=f"Filter by quarter: {QUARTER_HELP}")
-    parser.add_argument("--type", "-t", metavar="TYPE",
-                        help="Filter by deal type (e.g. 'New Business')")
-    parser.add_argument("--stage", "-s", metavar="STAGE",
-                        help="Filter by stage (fuzzy, e.g. '4. Closing')")
+    parser.add_argument("--type", "-t", nargs="+", metavar="TYPE",
+                        help="Filter by deal type(s) (e.g. 'New Business' or multiple)")
+    parser.add_argument("--stage", "-s", nargs="+", metavar="STAGE",
+                        help="Filter by stage(s) (e.g. '4. Closing' or multiple)")
+    parser.add_argument("--team", nargs="?", const=DEFAULT_MANAGER_ID, default=None,
+                        metavar="MANAGER_ID",
+                        help="Filter by team (default: your ID from config)")
+    parser.add_argument("--territory", "-r", nargs="+", metavar="TERRITORY",
+                        help="Filter by territory")
     parser.add_argument("--vd", action="store_true",
                         help="Open results in VisiData")
     parser.add_argument("--out", metavar="FILE",
                         help="Save results to CSV file")
     args = parser.parse_args()
 
+    # Apply saved view if specified
+    if args.view:
+        views = load_views()
+        if args.view not in views:
+            available = ", ".join(views.keys()) if views else "(none)"
+            print(f"  Unknown view: {args.view}")
+            print(f"  Available: {available}")
+            sys.exit(1)
+        apply_view(args, views[args.view])
+
+    # --team implies default quarter if not specified
+    if args.team and not args.quarter:
+        args.quarter = "this+next"
+
     has_filter = any([args.account, args.ae, args.ninja, args.quarter,
-                      args.type, args.stage])
+                      args.type, args.stage, args.team, args.territory])
     if not has_filter:
         parser.print_help()
         sys.exit(0)
 
+    print("\033[2J\033[H", end="")
+    filter_summary = build_filter_summary(args)
+    print(f"\n  {BOLD}{YELLOW}⏳ Loading opportunities...{RESET} ({filter_summary})\n")
+
     query = build_query(args)
     records = sfq.sf_query(query)
+
+    # Apply deal types filter before enrich (which remaps type names)
+    if DEAL_TYPES:
+        records = [r for r in records if r.get("Type", "") in DEAL_TYPES]
+
     records = enrich(records)
 
-    filter_summary = build_filter_summary(args)
-    print(f"\n  {len(records)} opportunities ({filter_summary})\n")
+    print(f"\033[2A\033[K  {len(records)} opportunities ({filter_summary})\n")
 
     if not records:
         return
@@ -115,7 +228,7 @@ def main():
         dump_output(records, args.out)
         return
 
-    # Interactive: go straight to opp list with drill-down
+    # Interactive: always start in flat list, ctrl-g to toggle grouped view
     opp_list_view(records, filter_summary)
 
 

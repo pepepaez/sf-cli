@@ -63,7 +63,8 @@ LIST_FIELD_MAP = {
 }
 
 DEFAULT_MANAGER_ID = _config.get("manager_id", "")
-DEAL_TYPES = ["New Business", "Up-sell and Retention"]
+DEAL_TYPES = _config.get("deal_types", ["New Business", "Up-sell and Retention"])
+DEFAULT_TERRITORIES = _config.get("default_territories", ["North America"])
 QUARTER_HELP = "this, next, this+next, or Q32026/2026Q3/Q3/2026-Q3"
 
 # Aggregation dimensions
@@ -77,17 +78,19 @@ AGG_DIMENSIONS = {
 DEFAULT_DIMS = ["type", "quarter"]
 
 
-# --- ANSI colors ---
+# --- ANSI colors (Gruvbox Dark) ---
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
-DIM = "\033[2m"
-CYAN = "\033[36m"
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
-MAGENTA = "\033[35m"
-WHITE = "\033[97m"
-BLUE = "\033[34m"
+DIM = "\033[38;2;146;131;116m"      # gruvbox gray
+CYAN = "\033[38;2;142;192;124m"     # gruvbox aqua
+GREEN = "\033[38;2;184;187;38m"     # gruvbox green
+YELLOW = "\033[38;2;250;189;47m"    # gruvbox yellow
+MAGENTA = "\033[38;2;211;134;155m"  # gruvbox purple
+WHITE = "\033[38;2;235;219;178m"    # gruvbox fg
+BLUE = "\033[38;2;131;165;152m"     # gruvbox blue
+ORANGE = "\033[38;2;254;128;25m"    # gruvbox orange
+RED = "\033[38;2;251;73;52m"        # gruvbox red
 
 
 def c(text, *codes):
@@ -311,6 +314,17 @@ def format_table_lines(records, field_map, group_cols=0):
         rows_data.append(row)
         for i, val in enumerate(row):
             widths[i] = max(widths[i], len(val))
+
+    # Cap column widths to keep table within terminal width
+    max_widths = {"Account.Name": 25, "Name": 35, "Owner.Name": 16,
+                  "Solution_Strategist1__r.Name": 16}
+    for i, k in enumerate(keys):
+        if k in max_widths:
+            widths[i] = min(widths[i], max_widths[k])
+
+    def truncate(val, w):
+        return val[:w-1] + "…" if len(val) > w else val.ljust(w)
+
     header_line = "  ".join(h.ljust(w) for h, w in zip(headers, widths))
     sep_line = "  ".join("-" * w for w in widths)
 
@@ -324,7 +338,7 @@ def format_table_lines(records, field_map, group_cols=0):
             else:
                 break  # stop blanking once a column differs
         prev = list(row)
-        row_lines.append("  ".join(val.ljust(w) for val, w in zip(display, widths)))
+        row_lines.append("  ".join(truncate(val, w) for val, w in zip(display, widths)))
 
     return header_line, sep_line, row_lines
 
@@ -379,54 +393,231 @@ def fetch_chatter(opp_id):
 # --- Interactive views ---
 
 def opp_list_view(opps, context=""):
-    """Interactive list of opportunities with full detail + chatter in preview pane."""
+    """Interactive list of opportunities with full detail + chatter in preview pane.
+
+    ctrl-g toggles to grouped/aggregated view.
+    """
     script_dir = os.path.dirname(os.path.abspath(__file__))
     preview_script = os.path.join(script_dir, "fzf-preview-opp.py")
 
-    # Write all record data to temp file for preview
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-    preview_data = []
-    for r in opps:
-        row = {k: v for k, v in r.items() if not k.startswith("_")}
-        preview_data.append(row)
-    json.dump(preview_data, tmp)
-    tmp.close()
+    while True:
+        # Write all record data to temp file for preview
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+        preview_data = []
+        for r in opps:
+            row = {k: v for k, v in r.items() if not k.startswith("_")}
+            preview_data.append(row)
+        json.dump(preview_data, tmp)
+        tmp.close()
 
-    try:
-        total_acv = sum(r["_acv"] for r in opps)
-        header, sep, lines = format_table_lines(opps, LIST_FIELD_MAP)
+        try:
+            total_acv = sum(r["_acv"] for r in opps)
+            header, sep, lines = format_table_lines(opps, LIST_FIELD_MAP)
 
-        TAB = "\t"
-        numbered_lines = [f"{i:04d}{TAB}{line}" for i, line in enumerate(lines)]
+            TAB = "\t"
+            numbered_lines = [f"{i:04d}{TAB}{line}" for i, line in enumerate(lines)]
 
-        # Use dummy prefix on header/sep so --with-nth 2.. aligns them with data
-        col_header = f"____{TAB}{header}"
-        col_sep = f"____{TAB}{sep}"
+            col_header = f"____{TAB}{header}"
+            col_sep = f"____{TAB}{sep}"
 
-        help_line = (f"\033[2mESC\033[0m back  "
-                     f"\033[2m←/→\033[0m scroll preview  "
-                     f"\033[2mctrl-/\033[0m resize pane")
-        fzf_header = (f"{help_line}\n"
-                      f"\033[2m{context}\033[0m\n"
-                      f"\033[1m\033[36m{fmt_eur(total_acv)}\033[0m | {len(opps)} opps")
+            help_line = (f"{DIM}ESC{RESET} back  "
+                         f"{DIM}←/→{RESET} scroll detail  "
+                         f"{DIM}ctrl-/{RESET} resize  "
+                         f"{DIM}ctrl-s{RESET} sort  "
+                         f"{DIM}ctrl-x{RESET} columns  "
+                         f"{DIM}ctrl-g{RESET} group")
+            fzf_header = (f"{help_line}\n"
+                          f"{DIM}{context}{RESET}\n"
+                          f"{BOLD}{CYAN}{fmt_eur(total_acv)}{RESET} | {len(opps)} opps")
 
-        fzf_input = [col_header, col_sep] + numbered_lines
+            fzf_input = [col_header, col_sep] + numbered_lines
 
-        preview_cmd = f"python3 {preview_script} {tmp.name} {{1}}"
-        cmd = ["fzf", "--prompt", "Opps > ", "--height", "90%", "--reverse",
-               "--no-sort", "--ansi", "--delimiter", "\t", "--with-nth", "2..",
-               "--header-lines", "2",
-               "--preview", preview_cmd, "--preview-window", "right:50%:wrap",
-               "--bind", "enter:ignore",
-               "--bind", "right:preview-down",
-               "--bind", "left:preview-up",
-               "--bind", "ctrl-/:change-preview-window(right,70%,wrap|right,50%,wrap|right,30%,wrap|hidden)",
-               "--header", fzf_header]
+            sort_script = os.path.join(script_dir, "fzf-sort-opps.py")
+            sort_choice_file = tmp.name + ".sort"
+            cols_script = os.path.join(script_dir, "fzf-cols-opps.py")
+            cols_choice_file = tmp.name + ".cols"
 
-        subprocess.run(cmd, input="\n".join(fzf_input),
-                       capture_output=True, text=True)
-    finally:
-        os.unlink(tmp.name)
+            sort_picker = (
+                f"execute(printf 'Account\\nOpportunity\\nACV\\nStage\\nType\\nClose Date\\nOwner\\nSS'"
+                f" | fzf --prompt 'Sort by > ' --height 12 --reverse"
+                f" > {sort_choice_file})"
+            )
+            sort_reload = f"reload(python3 {sort_script} {tmp.name} {sort_choice_file})"
+
+            cols_picker = (
+                f"execute(printf 'Account\\nOpportunity\\nACV\\nStage\\nType\\nClose Date\\nOwner\\nSS'"
+                f" | fzf --prompt 'Columns (tab to toggle) > ' --height 12 --reverse --multi"
+                f" > {cols_choice_file})"
+            )
+            cols_reload = f"reload(python3 {cols_script} {tmp.name} {cols_choice_file})"
+
+            preview_cmd = f"python3 {preview_script} {tmp.name} {{1}}"
+            cmd = ["fzf", "--prompt", "Opps > ", "--height", "90%", "--reverse",
+                   "--no-sort", "--ansi", "--delimiter", "\t", "--with-nth", "2..",
+                   "--header-lines", "2", "--no-hscroll", "--ellipsis", "",
+                   "--preview", preview_cmd, "--preview-window", "bottom:50%",
+                   "--expect", "ctrl-g",
+                   "--bind", "enter:ignore",
+                   "--bind", "right:preview-down",
+                   "--bind", "left:preview-up",
+                   "--bind", f"ctrl-s:{sort_picker}+{sort_reload}",
+                   "--bind", f"ctrl-x:{cols_picker}+{cols_reload}",
+                   "--bind", "ctrl-/:change-preview-window(bottom,60%|bottom,50%|bottom,40%|bottom,25%|hidden)",
+                   "--header", fzf_header]
+
+            result = subprocess.run(cmd, input="\n".join(fzf_input),
+                                    capture_output=True, text=True)
+        finally:
+            os.unlink(tmp.name)
+
+        if result.returncode != 0:
+            return
+
+        # --expect outputs key on first line (empty for Enter)
+        output_lines = result.stdout.split("\n", 1)
+        key_pressed = output_lines[0] if output_lines else ""
+
+        if key_pressed == "ctrl-g":
+            grouped_view(opps, context)
+            continue  # back to list view after grouped view exits
+        return
+
+
+def aggregate_report(records, dim_keys):
+    """Aggregate records by given dimension keys."""
+    groups = defaultdict(lambda: {"acv": 0.0, "count": 0, "opps": []})
+    for r in records:
+        key = tuple(r[AGG_DIMENSIONS[dk][0]] for dk in dim_keys)
+        groups[key]["acv"] += r["_acv"]
+        groups[key]["count"] += 1
+        groups[key]["opps"].append(r)
+
+    rows = []
+    for key in sorted(groups.keys()):
+        g = groups[key]
+        row = {"_opps": g["opps"]}
+        for i, dk in enumerate(dim_keys):
+            row[dk] = key[i]
+        row["acv"] = fmt_eur(g["acv"])
+        row["count"] = str(g["count"])
+        rows.append(row)
+    return rows
+
+
+def grouped_view(records, context=""):
+    """Aggregated/grouped view with dimension toggles and drill-down."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    preview_script = os.path.join(script_dir, "fzf-preview-pipeline.py")
+    dims = list(DEFAULT_DIMS)
+
+    while True:
+        agg_rows = aggregate_report(records, dims)
+        total_acv = sum(r["_acv"] for r in records)
+
+        if not agg_rows:
+            print("No records to group.")
+            return
+
+        field_map = {}
+        for dk in dims:
+            field_map[dk] = AGG_DIMENSIONS[dk][1]
+        field_map["acv"] = "ACV"
+        field_map["count"] = "#"
+
+        group_cols = len(dims) - 1 if len(dims) > 1 else 0
+        header, sep, lines = format_table_lines(agg_rows, field_map, group_cols=group_cols)
+
+        # Write opps per row to temp file for preview
+        preview_data = []
+        for row in agg_rows:
+            opps = row["_opps"]
+            preview_data.append([
+                {k: v for k, v in r.items() if not k.startswith("_")}
+                for r in opps
+            ])
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+        json.dump(preview_data, tmp)
+        tmp.close()
+
+        try:
+            all_dim_keys = list(AGG_DIMENSIONS.keys())
+            dim_toggles = []
+            for dk in all_dim_keys:
+                label = AGG_DIMENSIONS[dk][1]
+                if dk in dims:
+                    dim_toggles.append(f"  {GREEN}ON {RESET}  {label}")
+                else:
+                    dim_toggles.append(f"  {DIM}OFF{RESET}  {label}")
+
+            TAB = "\t"
+            numbered_toggles = [f"T{i:03d}{TAB}{t}" for i, t in enumerate(dim_toggles)]
+            numbered_lines = [f"D{i:03d}{TAB}{line}" for i, line in enumerate(lines)]
+
+            sep_line = f"{'─' * 40}"
+            col_header = f"____{TAB}{header}"
+            col_sep = f"____{TAB}{sep}"
+
+            fzf_items = numbered_toggles + [f"____{TAB}{sep_line}", col_header, col_sep] + numbered_lines
+            help_line = (f"{DIM}ESC{RESET} back  "
+                         f"{DIM}Enter{RESET} toggle/drill-down  "
+                         f"{DIM}←/→{RESET} scroll preview  "
+                         f"{DIM}ctrl-/{RESET} resize  "
+                         f"{DIM}ctrl-g{RESET} flat list")
+            fzf_header = (f"{help_line}\n"
+                          f"{DIM}{context}{RESET}\n"
+                          f"{BOLD}{CYAN}Total: {fmt_eur(total_acv)}{RESET}  |  {len(records)} opps")
+
+            dims_arg = ",".join(dims)
+            preview_cmd = f"python3 {preview_script} {tmp.name} {{1}} {dims_arg}"
+            cmd = ["fzf", "--prompt", "Grouped > ", "--height", "90%", "--reverse",
+                   "--no-sort", "--ansi", "--delimiter", "\t", "--with-nth", "2..",
+                   "--no-hscroll", "--ellipsis", "",
+                   "--expect", "ctrl-g",
+                   "--preview", preview_cmd, "--preview-window", "right:50%:wrap",
+                   "--bind", "right:preview-down",
+                   "--bind", "left:preview-up",
+                   "--bind", "ctrl-/:change-preview-window(right,70%,wrap|right,50%,wrap|right,30%,wrap|hidden)"]
+            result = subprocess.run(cmd + ["--header", fzf_header],
+                                    input="\n".join(fzf_items),
+                                    capture_output=True, text=True)
+        finally:
+            os.unlink(tmp.name)
+
+        if result.returncode != 0:
+            return
+
+        # --expect outputs key on first line (empty for Enter), selected on second
+        output_lines = result.stdout.split("\n", 2)
+        key_pressed = output_lines[0] if output_lines else ""
+        selected = output_lines[1].strip() if len(output_lines) > 1 else ""
+
+        # ctrl-g: back to flat list
+        if key_pressed == "ctrl-g":
+            return
+
+        prefix = selected.split(TAB, 1)[0] if selected else ""
+
+        if prefix.startswith("T"):
+            try:
+                tidx = int(prefix[1:])
+                dk = all_dim_keys[tidx]
+                if dk in dims:
+                    if len(dims) > 1:
+                        dims.remove(dk)
+                else:
+                    dims.append(dk)
+            except (ValueError, IndexError):
+                pass
+            continue
+
+        if prefix.startswith("D"):
+            try:
+                idx = int(prefix[1:])
+                drill_context = lines[idx].rstrip()
+                opp_list_view(agg_rows[idx]["_opps"], drill_context)
+            except (ValueError, IndexError):
+                pass
+            continue
 
 
 def print_detail_color(record, field_map):
