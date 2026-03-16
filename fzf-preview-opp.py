@@ -10,8 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shared import (
     BOLD, CYAN, DIM, GREEN, MAGENTA, RESET, WHITE, YELLOW,
     DETAIL_MAP,
-    c, days_since, enrich_detail, fetch_chatter, fmt_duration,
-    fmt_eur, remap_type, strip_html, to_float, _wrap_ansi,
+    c, days_since, enrich_detail, fetch_chatter, parse_solstrat_360,
+    fmt_duration, fmt_eur, remap_type, strip_html, to_float, _wrap_ansi,
 )
 
 
@@ -88,28 +88,35 @@ def build_card_lines(record, width):
 
 
 def build_chatter_lines(opp_id, width):
-    """Build chatter as list of strings."""
+    """Build chatter as list of strings (fetches chatter internally)."""
+    chatter_data = fetch_chatter(opp_id)
+    posts = chatter_data["posts"]
+    if not posts:
+        return [f"  {c('── Chatter ──', BOLD, MAGENTA)}", "",
+                f"  {c('No chatter posts.', DIM)}"]
+    return build_chatter_lines_from_posts(posts, width)
+
+
+def build_chatter_lines_from_posts(posts, width):
+    """Build chatter display from a list of post dicts."""
     lines = []
     lines.append(f"  {c('── Chatter ──', BOLD, MAGENTA)}")
     lines.append("")
 
-    chatter = fetch_chatter(opp_id)
     body_indent = 4
     body_width = max(width - body_indent - 2, 10)
-
-    if not chatter:
-        lines.append(f"  {c('No chatter posts.', DIM)}")
-        return lines
 
     def highlight_mention(m):
         name = m.group(1).strip()
         return c('@' + name, BOLD, GREEN)
 
-    for i, post in enumerate(chatter):
+    for i, post in enumerate(posts):
         author = post.get("CreatedBy.Name", "Unknown")
         date = post.get("CreatedDate", "")[:10]
         body = strip_html(post.get("Body", "") or "(no text)")
-        is_ninja = "NINJA UPDATE" in (body or "").upper()
+        upper = (body or "").upper()
+        is_ninja = "NINJA UPDATE" in upper
+        is_solstrat = "SOLSTRAT 360" in upper
 
         age_days = days_since(date)
         age_str = fmt_duration(age_days) + " ago" if age_days is not None else ""
@@ -131,6 +138,10 @@ def build_chatter_lines(opp_id, width):
         if is_ninja:
             tag = c(" NINJA UPDATE ", BOLD, YELLOW)
             lines.append(f"  {c(author, BOLD, CYAN)}  {c('•', DIM)}  {c(date, DIM)}  {age_styled}  {tag}")
+        elif is_solstrat:
+            BG_CYAN = "\033[46;30m"
+            tag = c(" SOLSTRAT 360 ", BG_CYAN, BOLD)
+            lines.append(f"  {c(author, BOLD, CYAN)}  {c('•', DIM)}  {c(date, DIM)}  {age_styled}  {tag}")
         else:
             lines.append(f"  {c(author, BOLD, CYAN)}  {c('•', DIM)}  {c(date, DIM)}  {age_styled}")
         lines.append("")
@@ -147,7 +158,7 @@ def build_chatter_lines(opp_id, width):
             for wline in wrapped:
                 lines.append(f"{body_pad}{wline}")
 
-        if i < len(chatter) - 1:
+        if i < len(posts) - 1:
             lines.append("")
             lines.append(f"  {c('━' * min(40, width - 4), DIM)}")
             lines.append("")
@@ -168,17 +179,21 @@ def merge_side_by_side(left_lines, right_lines, left_width, sep="│"):
 
 
 def build_note_lines(note, width):
-    """Build session note display lines."""
+    """Build SOLSTRAT 360 note display lines."""
     BG_CYAN = "\033[46;30m"  # cyan bg, black fg
     lines = []
     lines.append("")
-    lines.append(f"  {c(' SESSION NOTE ', BG_CYAN, BOLD)}")
+    note_date = note.get("_date", "")
+    if note_date:
+        lines.append(f"  {c(' SOLSTRAT 360 ', BG_CYAN, BOLD)}  {c(note_date, DIM)}")
+    else:
+        lines.append(f"  {c(' SOLSTRAT 360 ', BG_CYAN, BOLD)}")
     lines.append("")
 
     fields = [
         ("Status", note.get("status", "")),
         ("Activity", note.get("activity", "")),
-        ("Current Status", note.get("current_status", "")),
+        ("Current", note.get("current") or note.get("current_status", "")),
         ("Next Steps", note.get("next_steps", "")),
         ("Risks", note.get("risks", "")),
     ]
@@ -202,7 +217,7 @@ def build_note_lines(note, width):
         # Wrap long values
         if len(value) > value_width:
             wrapped = textwrap.wrap(value, width=value_width)
-            lines.append(f"  {label_str}  {c(wrapped[0], BOLD) if label in ('Current Status', 'Next Steps') else wrapped[0]}")
+            lines.append(f"  {label_str}  {c(wrapped[0], BOLD) if label in ('Current', 'Next Steps') else wrapped[0]}")
             indent = " " * (max_label + 4)
             for wl in wrapped[1:]:
                 lines.append(f"  {indent}{wl}")
@@ -255,15 +270,31 @@ def main():
     # Build detail card
     card_lines = build_card_lines(r, left_width)
 
-    # Add session note below detail card if present
+    # Fetch chatter
+    chatter_data = {"posts": [], "solstrat": None, "solstrat_raw": ""}
+    if opp_id:
+        chatter_data = fetch_chatter(opp_id)
+
+    # Add note below detail card: local session note takes priority,
+    # otherwise use parsed SOLSTRAT 360 from chatter
+    solstrat_parsed = False
     if session_note:
         card_lines.extend(build_note_lines(session_note, left_width))
+        solstrat_parsed = True  # local note supersedes chatter
+    elif chatter_data.get("solstrat"):
+        card_lines.extend(build_note_lines(chatter_data["solstrat"], left_width))
+        solstrat_parsed = True
 
-    # Fetch chatter
-    if opp_id:
-        chatter_lines = build_chatter_lines(opp_id, right_width)
+    # Build chatter display — exclude SOLSTRAT 360 posts when parsed
+    posts = chatter_data["posts"]
+    if solstrat_parsed:
+        posts = [p for p in posts
+                 if "SOLSTRAT 360" not in (strip_html(p.get("Body", "") or "")).upper()]
+
+    if posts:
+        chatter_lines = build_chatter_lines_from_posts(posts, right_width)
     else:
-        chatter_lines = [f"  {c('No chatter.', DIM)}"]
+        chatter_lines = [f"  {c('No chatter posts.', DIM)}"]
 
     # Print merged side-by-side
     merged = merge_side_by_side(card_lines, chatter_lines, left_width)

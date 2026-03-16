@@ -27,7 +27,7 @@ OPP_FIELDS = (
 
 def build_query(args):
     """Build SOQL query from filter arguments."""
-    conditions = ["IsClosed = false"]
+    conditions = [] if (args.all_stages or args.stage) else ["IsClosed = false"]
 
     if args.account:
         conditions.append(f"Account.Name LIKE '%{escape_soql(args.account)}%'")
@@ -101,6 +101,8 @@ def build_filter_summary(args):
         parts.append(f"stage={','.join(stages)}")
     if args.territory:
         parts.append(f"territory={','.join(args.territory)}")
+    if args.all_stages:
+        parts.append("all stages")
     return ", ".join(parts) if parts else "all open"
 
 
@@ -178,6 +180,8 @@ def main():
                         help="Filter by team (default: your ID from config)")
     parser.add_argument("--territory", "-r", nargs="+", metavar="TERRITORY",
                         help="Filter by territory")
+    parser.add_argument("--all-stages", "-A", action="store_true",
+                        help="Include closed/won opportunities (all stages)")
     parser.add_argument("--vd", action="store_true",
                         help="Open results in VisiData")
     parser.add_argument("--out", metavar="FILE",

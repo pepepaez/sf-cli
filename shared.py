@@ -355,7 +355,15 @@ def fetch_opp_detail(opp_id):
 
 
 def fetch_chatter(opp_id):
-    """Fetch last comment + last NINJA UPDATE comment (if different)."""
+    """Fetch chatter posts with categorized results.
+
+    Returns dict with:
+      posts       – display list (last comment + last NINJA if different)
+      ninja_body  – body text of latest NINJA UPDATE (or "")
+      other_body  – body text of latest non-ninja, non-solstrat post (or "")
+      solstrat    – parsed SOLSTRAT 360 dict (or None)
+      solstrat_raw – raw body of latest SOLSTRAT 360 (or "")
+    """
     query = (
         "SELECT CreatedBy.Name, CreatedDate, Body, Type "
         "FROM OpportunityFeed "
@@ -363,31 +371,109 @@ def fetch_chatter(opp_id):
         "ORDER BY CreatedDate DESC "
         "LIMIT 50"
     )
-    posts = sfq.sf_query(query)
-    if not posts:
-        return []
+    raw_posts = sfq.sf_query(query)
+    empty = {"posts": [], "ninja_body": "", "other_body": "",
+             "solstrat": None, "solstrat_raw": ""}
+    if not raw_posts:
+        return empty
 
     last_comment = None
-    for p in posts:
-        body = p.get("Body", "") or ""
-        if body.strip():
-            last_comment = p
-            break
-
     last_ninja = None
-    for p in posts:
-        body = p.get("Body", "") or ""
-        if "NINJA UPDATE" in body.upper():
+    last_other = None
+    last_solstrat_post = None
+
+    for p in raw_posts:
+        body = strip_html(p.get("Body", "") or "")
+        if not body.strip():
+            continue
+        upper = body.upper()
+        is_ninja = "NINJA UPDATE" in upper
+        is_solstrat = "SOLSTRAT 360" in upper
+
+        if last_comment is None:
+            last_comment = p
+        if is_ninja and last_ninja is None:
             last_ninja = p
-            break
+        if is_solstrat and last_solstrat_post is None:
+            last_solstrat_post = p
+        if not is_ninja and not is_solstrat and last_other is None:
+            last_other = p
 
-    result = []
-    if last_comment:
-        result.append(last_comment)
-    if last_ninja and last_ninja is not last_comment:
-        result.append(last_ninja)
+    # Build display list with all distinct post types
+    display = []
+    seen = set()
+    for post in [last_other, last_ninja, last_solstrat_post]:
+        if post and id(post) not in seen:
+            display.append(post)
+            seen.add(id(post))
+    display.sort(key=lambda p: p.get("CreatedDate", ""), reverse=True)
 
-    return result
+    ninja_body = strip_html(last_ninja.get("Body", "") or "") if last_ninja else ""
+    other_body = strip_html(last_other.get("Body", "") or "") if last_other else ""
+    solstrat_raw = strip_html(last_solstrat_post.get("Body", "") or "") if last_solstrat_post else ""
+    solstrat = parse_solstrat_360(solstrat_raw) if solstrat_raw else None
+
+    return {"posts": display, "ninja_body": ninja_body, "other_body": other_body,
+            "solstrat": solstrat, "solstrat_raw": solstrat_raw}
+
+
+def parse_solstrat_360(body):
+    """Parse a SOLSTRAT 360 chatter post into note fields. Returns dict or None."""
+    lines = body.strip().split("\n")
+    if not lines or "SOLSTRAT 360" not in lines[0].upper():
+        return None
+
+    field_map = {
+        "status": "status",
+        "activity": "activity",
+        "current": "current",
+        "next steps": "next_steps",
+        "risks": "risks",
+    }
+    note = {}
+    for line in lines[1:]:
+        line = line.strip()
+        if ":" in line:
+            key, _, value = line.partition(":")
+            key_lower = key.strip().lower()
+            if key_lower in field_map:
+                note[field_map[key_lower]] = value.strip()
+
+    return note if note else None
+
+
+def post_solstrat_360(opp_id, note):
+    """Post a SOLSTRAT 360 note to opportunity chatter. Returns (success, msg)."""
+    body_lines = [
+        "SOLSTRAT 360",
+        f"Status: {note.get('status', '')}",
+        f"Activity: {note.get('activity', '')}",
+        f"Current: {note.get('current', '')}",
+        f"Next Steps: {note.get('next_steps', '')}",
+        f"Risks: {note.get('risks', '')}",
+    ]
+    body = "\\n".join(body_lines)
+    # Escape single quotes in body
+    body = body.replace("'", "\\'")
+
+    result = subprocess.run(
+        ["sf", "data", "create", "record",
+         "--sobject", "FeedItem",
+         "--values", f"ParentId='{opp_id}' Body='{body}'",
+         "--target-org", sfq.ORG,
+         "--json"],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return False, result.stderr or result.stdout
+
+    try:
+        data = json.loads(result.stdout)
+        if data.get("result", {}).get("success"):
+            return True, data["result"].get("id", "")
+        return False, str(data.get("result", {}).get("errors", []))
+    except (json.JSONDecodeError, KeyError):
+        return False, "Failed to parse SF response"
 
 
 # --- Interactive views ---
@@ -398,12 +484,44 @@ def opp_list_view(opps, context="", filters=None):
     ctrl-g toggles to grouped/aggregated view.
     ctrl-v saves current filters as a named view.
     ctrl-n captures a session note for the selected opp.
+    ctrl-r shows all session notes history.
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
     preview_script = os.path.join(script_dir, "fzf-preview-opp.py")
     save_script = os.path.join(script_dir, "fzf-save-view.py")
     note_script = os.path.join(script_dir, "fzf-note-opp.py")
+    notes_history_script = os.path.join(script_dir, "fzf-notes-history.py")
     notes_file = os.path.join(tempfile.gettempdir(), f"sf_notes_{os.getpid()}.json")
+    baseline_file = os.path.join(tempfile.gettempdir(), f"sf_notes_baseline_{os.getpid()}.json")
+
+    # Load persistent notes from history
+    history_file = os.path.join(script_dir, "notes_history.json")
+    if os.path.exists(history_file):
+        try:
+            with open(history_file) as f:
+                history = json.load(f)
+            if history:
+                # Latest note per opp_id across all sessions
+                persistent_notes = {}
+                for session in history:
+                    session_date = session.get("date", "")
+                    for opp_id, note in session.get("notes", {}).items():
+                        clean = {k: v for k, v in note.items()
+                                 if k not in ("account", "opportunity")}
+                        clean["_date"] = session_date
+                        # Migrate old current_status → current
+                        if "current_status" in clean and "current" not in clean:
+                            clean["current"] = clean.pop("current_status")
+                        persistent_notes[opp_id] = clean
+                if persistent_notes:
+                    with open(notes_file, "w") as f:
+                        json.dump(persistent_notes, f)
+                    with open(baseline_file, "w") as f:
+                        json.dump(persistent_notes, f)
+                    latest_date = max(s.get("date", "") for s in history)
+                    print(f"  {DIM}Latest session notes: {latest_date}{RESET}")
+        except (json.JSONDecodeError, FileNotFoundError):
+            pass
 
     while True:
         # Write all record data to temp file for preview
@@ -425,6 +543,15 @@ def opp_list_view(opps, context="", filters=None):
             col_header = f"____{TAB}{header}"
             col_sep = f"____{TAB}{sep}"
 
+            # Save ACV values and lines for dynamic header
+            header_script = os.path.join(script_dir, "fzf-header-opps.py")
+            acv_file = tmp.name + ".acv"
+            lines_file = tmp.name + ".lines"
+            with open(acv_file, "w") as af:
+                json.dump([r["_acv"] for r in opps], af)
+            with open(lines_file, "w") as lf:
+                lf.write("\n".join(numbered_lines))
+
             help_line = (f"{DIM}ESC{RESET} back  "
                          f"{DIM}←/→{RESET} scroll detail  "
                          f"{DIM}ctrl-/{RESET} resize  "
@@ -432,10 +559,12 @@ def opp_list_view(opps, context="", filters=None):
                          f"{DIM}ctrl-x{RESET} columns  "
                          f"{DIM}ctrl-g{RESET} group  "
                          f"{DIM}ctrl-n{RESET} note  "
+                         f"{DIM}ctrl-r{RESET} all notes  "
                          f"{DIM}ctrl-v{RESET} save view")
             fzf_header = (f"{help_line}\n"
-                          f"{DIM}{context}{RESET}\n"
-                          f"{BOLD}{CYAN}{fmt_eur(total_acv)}{RESET} | {len(opps)} opps")
+                          f"{DIM}{context}{RESET}")
+            border_label = f" {fmt_eur(total_acv)} | {len(opps)} opps "
+            header_cmd = f"transform-border-label(python3 {header_script} {acv_file} {lines_file} {{q}})"
 
             fzf_input = [col_header, col_sep] + numbered_lines
 
@@ -476,18 +605,26 @@ def opp_list_view(opps, context="", filters=None):
                 f"+refresh-preview"
             )
 
+            # Notes history viewer
+            notes_history_cmd = (
+                f"execute(python3 {notes_history_script} {notes_file})"
+            )
+
             preview_cmd = f"python3 {preview_script} {tmp.name} {{1}} {notes_file}"
             cmd = ["fzf", "--prompt", "Opps > ", "--height", "90%", "--reverse",
                    "--no-sort", "--ansi", "--delimiter", "\t", "--with-nth", "2..",
                    "--header-lines", "2", "--no-hscroll", "--ellipsis", "",
                    "--preview", preview_cmd, "--preview-window", "bottom:50%",
+                   "--border", "top", "--border-label", border_label,
                    "--expect", "ctrl-g",
                    "--bind", "enter:ignore",
                    "--bind", "right:preview-down",
                    "--bind", "left:preview-up",
+                   "--bind", f"change:{header_cmd}",
                    "--bind", f"ctrl-s:{sort_picker}+{sort_reload}",
                    "--bind", f"ctrl-x:{cols_picker}+{cols_reload}",
                    "--bind", f"ctrl-n:{note_cmd}",
+                   "--bind", f"ctrl-r:{notes_history_cmd}",
                    "--bind", f"ctrl-v:{save_view_cmd}",
                    "--bind", "ctrl-/:change-preview-window(bottom,60%|bottom,50%|bottom,40%|bottom,25%|hidden)",
                    "--header", fzf_header]
@@ -495,11 +632,15 @@ def opp_list_view(opps, context="", filters=None):
             result = subprocess.run(cmd, input="\n".join(fzf_input),
                                     capture_output=True, text=True)
         finally:
-            os.unlink(tmp.name)
+            for tf in [tmp.name, acv_file, lines_file]:
+                try:
+                    os.unlink(tf)
+                except OSError:
+                    pass
 
         if result.returncode != 0:
             # On exit, check for session notes and offer CSV export
-            _export_session_notes(notes_file, opps)
+            _export_session_notes(notes_file, opps, baseline_file)
             return
 
         # --expect outputs key on first line (empty for Enter)
@@ -509,20 +650,44 @@ def opp_list_view(opps, context="", filters=None):
         if key_pressed == "ctrl-g":
             grouped_view(opps, context, filters=filters)
             continue  # back to list view after grouped view exits
-        _export_session_notes(notes_file, opps)
+        _export_session_notes(notes_file, opps, baseline_file)
         return
 
 
-def _export_session_notes(notes_file, opps):
-    """If session notes exist, offer to export as CSV and save to history JSON."""
+def _export_session_notes(notes_file, opps, baseline_file=None):
+    """If new session notes exist, offer to export as CSV and save to history JSON."""
     if not os.path.exists(notes_file):
+        _cleanup_files(notes_file, baseline_file)
         return
     try:
         with open(notes_file) as f:
             notes = json.load(f)
     except (json.JSONDecodeError, FileNotFoundError):
+        _cleanup_files(notes_file, baseline_file)
         return
     if not notes:
+        _cleanup_files(notes_file, baseline_file)
+        return
+
+    # Load baseline to find new/modified notes only
+    baseline = {}
+    if baseline_file and os.path.exists(baseline_file):
+        try:
+            with open(baseline_file) as f:
+                baseline = json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            pass
+
+    new_notes = {}
+    for opp_id, note in notes.items():
+        base_note = baseline.get(opp_id, {})
+        note_cmp = {k: v for k, v in note.items() if not k.startswith("_")}
+        base_cmp = {k: v for k, v in base_note.items() if not k.startswith("_")}
+        if note_cmp != base_cmp:
+            new_notes[opp_id] = note
+
+    if not new_notes:
+        _cleanup_files(notes_file, baseline_file)
         return
 
     # Build lookup
@@ -532,25 +697,35 @@ def _export_session_notes(notes_file, opps):
         if opp_id:
             opp_lookup[opp_id] = r
 
-    noted_count = len(notes)
-    print(f"\n  {BOLD}{YELLOW}{noted_count} session note(s) captured.{RESET}")
-    answer = input(f"  Save to CSV? (y/n): ").strip().lower()
+    noted_count = len(new_notes)
+    print(f"\n  {BOLD}{YELLOW}{noted_count} new session note(s):{RESET}")
+    for opp_id, note in new_notes.items():
+        r = opp_lookup.get(opp_id, {})
+        acct = r.get("Account.Name", "")
+        opp_name = r.get("Name", "")
+        status = note.get("status", "")
+        activity = note.get("activity", "")
+        print(f"    {CYAN}{acct}{RESET} — {opp_name}  [{status}, {activity}]")
+
+    answer = input(f"\n  Save to CSV? (y/n): ").strip().lower()
     if answer in ("y", "yes"):
-        # Ask for filename
         default_name = "session_notes.csv"
         fname = input(f"  Filename [{default_name}]: ").strip() or default_name
         if not fname.endswith(".csv"):
             fname += ".csv"
 
-        import csv
         csv_fields = ["Account", "Opportunity", "ACV", "Stage", "Type", "Quarter",
                        "Close Date", "Owner", "SS",
-                       "Status", "Activity", "Current Status", "Next Steps", "Risks"]
+                       "Ninja Update", "Chatter",
+                       "Status", "Activity", "Current", "Next Steps", "Risks"]
+        print(f"  {DIM}Fetching chatter for CSV...{RESET}")
         with open(fname, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=csv_fields)
             writer.writeheader()
-            for opp_id, note in notes.items():
+            for opp_id, note in new_notes.items():
                 r = opp_lookup.get(opp_id, {})
+                # Fetch chatter to get ninja/other columns
+                chatter_data = fetch_chatter(opp_id)
                 writer.writerow({
                     "Account": r.get("Account.Name", ""),
                     "Opportunity": r.get("Name", ""),
@@ -561,15 +736,17 @@ def _export_session_notes(notes_file, opps):
                     "Close Date": r.get("CloseDate", ""),
                     "Owner": r.get("Owner.Name", ""),
                     "SS": r.get("Solution_Strategist1__r.Name", ""),
+                    "Ninja Update": chatter_data.get("ninja_body", ""),
+                    "Chatter": chatter_data.get("other_body", ""),
                     "Status": note.get("status", ""),
                     "Activity": note.get("activity", ""),
-                    "Current Status": note.get("current_status", ""),
+                    "Current": note.get("current") or note.get("current_status", ""),
                     "Next Steps": note.get("next_steps", ""),
                     "Risks": note.get("risks", ""),
                 })
         print(f"  {GREEN}Saved to {fname}{RESET}")
 
-    # Always save to history JSON
+    # Save only new notes to history JSON
     script_dir = os.path.dirname(os.path.abspath(__file__))
     history_file = os.path.join(script_dir, "notes_history.json")
     history = []
@@ -580,17 +757,16 @@ def _export_session_notes(notes_file, opps):
         except (json.JSONDecodeError, FileNotFoundError):
             pass
 
-    from datetime import datetime
     session_entry = {
         "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "notes": {}
     }
-    for opp_id, note in notes.items():
+    for opp_id, note in new_notes.items():
         r = opp_lookup.get(opp_id, {})
         session_entry["notes"][opp_id] = {
             "account": r.get("Account.Name", ""),
             "opportunity": r.get("Name", ""),
-            **note,
+            **{k: v for k, v in note.items() if not k.startswith("_")},
         }
     history.append(session_entry)
 
@@ -598,8 +774,17 @@ def _export_session_notes(notes_file, opps):
         json.dump(history, f, indent=2)
     print(f"  {DIM}History saved to notes_history.json{RESET}")
 
-    # Clean up temp
-    os.unlink(notes_file)
+    _cleanup_files(notes_file, baseline_file)
+
+
+def _cleanup_files(*files):
+    """Remove temp files if they exist."""
+    for f in files:
+        if f and os.path.exists(f):
+            try:
+                os.unlink(f)
+            except OSError:
+                pass
 
 
 def aggregate_report(records, dim_keys):
@@ -813,7 +998,8 @@ def opp_detail_view(opp_id):
     print()
     print_detail_color(detail, DETAIL_MAP)
 
-    chatter = fetch_chatter(opp_id)
+    chatter_data = fetch_chatter(opp_id)
+    chatter = chatter_data["posts"]
     term_width = shutil.get_terminal_size((80, 24)).columns
     body_indent = 6
     body_width = term_width - body_indent - 4

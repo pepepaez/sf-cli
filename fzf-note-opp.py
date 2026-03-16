@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
-"""Capture a structured session note for an opportunity."""
+"""Capture a structured SOLSTRAT 360 note for an opportunity."""
 import json
 import os
 import subprocess
 import sys
+from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shared import post_solstrat_360
 
 STATUSES = ["Active", "Inactive"]
 ACTIVITIES = ["Disco", "Demo", "PoC", "RFP", "Value Case", "Closing Support", "Handover"]
+
+GREEN = "\033[1m\033[38;2;142;192;124m"
+YELLOW = "\033[1m\033[38;2;184;187;38m"
+RED = "\033[1m\033[38;2;251;73;52m"
+DIM = "\033[2m"
+RESET = "\033[0m"
 
 
 def fzf_pick(options, prompt):
@@ -58,7 +68,7 @@ def main():
         return
 
     print(f"\033[2J\033[H")
-    print(f"  \033[1m\033[38;2;142;192;124mNote for:\033[0m {account} — {opp_name}\n")
+    print(f"  {GREEN}SOLSTRAT 360 for:{RESET} {account} — {opp_name}\n")
 
     # 1. Status
     status = fzf_pick(STATUSES, "Status > ")
@@ -70,8 +80,8 @@ def main():
     if activity is None:
         return
 
-    # 3. Current Status (free text)
-    current = fzf_text("Current Status > ")
+    # 3. Current (free text)
+    current = fzf_text("Current > ")
     if current is None:
         return
 
@@ -88,12 +98,13 @@ def main():
     note = {
         "status": status,
         "activity": activity,
-        "current_status": current,
+        "current": current,
         "next_steps": next_steps,
         "risks": risks,
+        "_date": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
 
-    # Load existing notes
+    # Save locally first
     notes = {}
     if os.path.exists(notes_file):
         try:
@@ -107,7 +118,18 @@ def main():
     with open(notes_file, "w") as f:
         json.dump(notes, f)
 
-    print(f"\n  \033[1m\033[38;2;184;187;38mNote saved.\033[0m")
+    print(f"\n  {YELLOW}Note saved locally.{RESET}")
+
+    # Post to Salesforce chatter
+    print(f"  {DIM}Posting to Salesforce...{RESET}", end="", flush=True)
+    success, msg = post_solstrat_360(opp_id, note)
+    if success:
+        print(f"\r  {GREEN}Posted to Salesforce{RESET} {DIM}({msg}){RESET}")
+    else:
+        print(f"\r  {RED}Failed to post to Salesforce{RESET}")
+        print(f"  {DIM}{msg}{RESET}")
+
+    input(f"\n  {DIM}Press Enter to continue...{RESET}")
 
 
 if __name__ == "__main__":
