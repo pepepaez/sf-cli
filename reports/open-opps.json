@@ -5,7 +5,7 @@
     {
       "name": "manager_id",
       "prompt": "Manager ID",
-      "default": "YOUR_MANAGER_ID"
+      "default": "FROM_CONFIG"
     }
   ],
   "query": "SELECT Account.Name, Name, convertCurrency(Amount), Territory__c, Owner.Name, CloseDate, StageName, Type, Solution_Strategist1__r.Name, Managerial_Forecast_Category__c FROM Opportunity WHERE IsClosed = false AND Solution_Strategist1__r.ManagerId = '{manager_id}' AND (CloseDate = THIS_QUARTER OR CloseDate = NEXT_QUARTER) ORDER BY Solution_Strategist1__r.Name, CloseDate ASC",

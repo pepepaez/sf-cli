@@ -6,9 +6,6 @@ import subprocess
 import sys
 from datetime import datetime
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from shared import post_solstrat_360
-
 STATUSES = ["Active", "Inactive"]
 ACTIVITIES = ["Disco", "Demo", "PoC", "RFP", "Value Case", "Closing Support", "Handover"]
 
@@ -118,18 +115,7 @@ def main():
     with open(notes_file, "w") as f:
         json.dump(notes, f)
 
-    print(f"\n  {YELLOW}Note saved locally.{RESET}")
-
-    # Post to Salesforce chatter
-    print(f"  {DIM}Posting to Salesforce...{RESET}", end="", flush=True)
-    success, msg = post_solstrat_360(opp_id, note)
-    if success:
-        print(f"\r  {GREEN}Posted to Salesforce{RESET} {DIM}({msg}){RESET}")
-    else:
-        print(f"\r  {RED}Failed to post to Salesforce{RESET}")
-        print(f"  {DIM}{msg}{RESET}")
-
-    input(f"\n  {DIM}Press Enter to continue...{RESET}")
+    print(f"\n  {YELLOW}Note saved.{RESET}")
 
 
 if __name__ == "__main__":

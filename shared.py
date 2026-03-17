@@ -774,6 +774,21 @@ def _export_session_notes(notes_file, opps, baseline_file=None):
         json.dump(history, f, indent=2)
     print(f"  {DIM}History saved to notes_history.json{RESET}")
 
+    # Offer to post to Salesforce
+    sf_answer = input(f"\n  Post to Salesforce? (y/n): ").strip().lower()
+    if sf_answer in ("y", "yes"):
+        for opp_id, note in new_notes.items():
+            r = opp_lookup.get(opp_id, {})
+            acct = r.get("Account.Name", "")
+            opp_name = r.get("Name", "")
+            print(f"  {DIM}Posting {acct} — {opp_name}...{RESET}", end="", flush=True)
+            success, msg = post_solstrat_360(opp_id, note)
+            if success:
+                print(f"\r  {GREEN}{acct} — {opp_name}{RESET} {DIM}({msg}){RESET}")
+            else:
+                print(f"\r  {RED}{acct} — {opp_name} FAILED{RESET}")
+                print(f"    {DIM}{msg}{RESET}")
+
     _cleanup_files(notes_file, baseline_file)
 
 
