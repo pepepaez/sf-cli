@@ -442,38 +442,6 @@ def parse_solstrat_360(body):
     return note if note else None
 
 
-def post_solstrat_360(opp_id, note):
-    """Post a SOLSTRAT 360 note to opportunity chatter. Returns (success, msg)."""
-    body_lines = [
-        "SOLSTRAT 360",
-        f"Status: {note.get('status', '')}",
-        f"Activity: {note.get('activity', '')}",
-        f"Current: {note.get('current', '')}",
-        f"Next Steps: {note.get('next_steps', '')}",
-        f"Risks: {note.get('risks', '')}",
-    ]
-    body = "\\n".join(body_lines)
-    # Escape single quotes in body
-    body = body.replace("'", "\\'")
-
-    result = subprocess.run(
-        ["sf", "data", "create", "record",
-         "--sobject", "FeedItem",
-         "--values", f"ParentId='{opp_id}' Body='{body}'",
-         "--target-org", sfq.ORG,
-         "--json"],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0:
-        return False, result.stderr or result.stdout
-
-    try:
-        data = json.loads(result.stdout)
-        if data.get("result", {}).get("success"):
-            return True, data["result"].get("id", "")
-        return False, str(data.get("result", {}).get("errors", []))
-    except (json.JSONDecodeError, KeyError):
-        return False, "Failed to parse SF response"
 
 
 # --- Interactive views ---
@@ -773,21 +741,6 @@ def _export_session_notes(notes_file, opps, baseline_file=None):
     with open(history_file, "w") as f:
         json.dump(history, f, indent=2)
     print(f"  {DIM}History saved to notes_history.json{RESET}")
-
-    # Offer to post to Salesforce
-    sf_answer = input(f"\n  Post to Salesforce? (y/n): ").strip().lower()
-    if sf_answer in ("y", "yes"):
-        for opp_id, note in new_notes.items():
-            r = opp_lookup.get(opp_id, {})
-            acct = r.get("Account.Name", "")
-            opp_name = r.get("Name", "")
-            print(f"  {DIM}Posting {acct} — {opp_name}...{RESET}", end="", flush=True)
-            success, msg = post_solstrat_360(opp_id, note)
-            if success:
-                print(f"\r  {GREEN}{acct} — {opp_name}{RESET} {DIM}({msg}){RESET}")
-            else:
-                print(f"\r  {RED}{acct} — {opp_name} FAILED{RESET}")
-                print(f"    {DIM}{msg}{RESET}")
 
     _cleanup_files(notes_file, baseline_file)
 
