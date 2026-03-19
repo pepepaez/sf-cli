@@ -6,7 +6,7 @@ import re
 import sys
 import textwrap
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared import (
     BOLD, CYAN, DIM, GREEN, MAGENTA, RED, WHITE, YELLOW,
     BG_GREEN, BG_YELLOW, BG_RED, BG_CYAN,

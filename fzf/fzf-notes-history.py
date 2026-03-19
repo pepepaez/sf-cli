@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared import BOLD, CYAN, DIM, GREEN, RESET, c
 
 
@@ -62,8 +62,8 @@ def main():
         return
 
     # Main mode: show fzf list of all notes
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    history_file = os.path.join(script_dir, "notes_history.json")
+    _root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    history_file = os.path.join(_root_dir, "notes_history.json")
     notes_file = sys.argv[1] if len(sys.argv) > 1 else None
 
     # Load history

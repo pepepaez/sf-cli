@@ -4,7 +4,7 @@ import json
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared import format_table_lines, LIST_FIELD_MAP, quarter_from_date, to_float
 
 LABEL_TO_KEY = {

@@ -4,7 +4,8 @@ import json
 import os
 import sys
 
-VIEWS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "views.yaml")
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VIEWS_PATH = os.path.join(_ROOT_DIR, "views.yaml")
 
 
 def format_value(val):

@@ -229,11 +229,11 @@ def opp_list_view(opps, context="", filters=None):
       ctrl-v   – save current filters as a named view
     """
     script_dir = _SCRIPT_DIR
-    preview_script        = os.path.join(script_dir, "fzf-preview-opp.py")
-    save_script           = os.path.join(script_dir, "fzf-save-view.py")
-    note_script           = os.path.join(script_dir, "fzf-note-opp.py")
-    notes_history_script  = os.path.join(script_dir, "fzf-notes-history.py")
-    chatter_refresh_script = os.path.join(script_dir, "fzf-chatter-refresh.py")
+    preview_script        = os.path.join(script_dir, "fzf", "fzf-preview-opp.py")
+    save_script           = os.path.join(script_dir, "fzf", "fzf-save-view.py")
+    note_script           = os.path.join(script_dir, "fzf", "fzf-note-opp.py")
+    notes_history_script  = os.path.join(script_dir, "fzf", "fzf-notes-history.py")
+    chatter_refresh_script = os.path.join(script_dir, "fzf", "fzf-chatter-refresh.py")
     notes_file   = os.path.join(tempfile.gettempdir(), f"sf_notes_{os.getpid()}.json")
     baseline_file = os.path.join(tempfile.gettempdir(), f"sf_notes_baseline_{os.getpid()}.json")
 
@@ -304,7 +304,7 @@ def opp_list_view(opps, context="", filters=None):
             col_sep    = f"____{TAB}{sep}"
 
             # ACV and lines files let fzf-header-opps.py update the border label dynamically
-            header_script = os.path.join(script_dir, "fzf-header-opps.py")
+            header_script = os.path.join(script_dir, "fzf", "fzf-header-opps.py")
             acv_file   = tmp.name + ".acv"
             lines_file = tmp.name + ".lines"
             with open(acv_file, "w", encoding="utf-8") as af:
@@ -348,9 +348,9 @@ def opp_list_view(opps, context="", filters=None):
 
             fzf_input = [col_header, col_sep] + numbered_lines
 
-            sort_script      = os.path.join(script_dir, "fzf-sort-opps.py")
+            sort_script      = os.path.join(script_dir, "fzf", "fzf-sort-opps.py")
             sort_choice_file = tmp.name + ".sort"
-            cols_script      = os.path.join(script_dir, "fzf-cols-opps.py")
+            cols_script      = os.path.join(script_dir, "fzf", "fzf-cols-opps.py")
             cols_choice_file = tmp.name + ".cols"
 
             sort_picker = (
@@ -382,7 +382,7 @@ def opp_list_view(opps, context="", filters=None):
             )
 
             # Note capture — reload list after to update Status/Activity columns
-            reload_notes_script = os.path.join(script_dir, "fzf-reload-notes.py")
+            reload_notes_script = os.path.join(script_dir, "fzf", "fzf-reload-notes.py")
             note_cmd = (
                 f"execute(python3 {note_script} {notes_file} {tmp.name} {{1}})"
                 f"+reload(python3 {reload_notes_script} {tmp.name}"
@@ -398,7 +398,7 @@ def opp_list_view(opps, context="", filters=None):
             )
 
             # Refilter — prompts for new args, reloads list from opp cache
-            reload_script    = os.path.join(script_dir, "fzf-reload-opps.py")
+            reload_script    = os.path.join(script_dir, "fzf", "fzf-reload-opps.py")
             filter_input_file = tmp.name + ".refilter"
             refilter_cmd = (
                 f"execute(echo '' | fzf --prompt 'Filter > ' --print-query"
@@ -411,7 +411,7 @@ def opp_list_view(opps, context="", filters=None):
             )
 
             # View picker — select a saved view, reload with its filter args
-            pick_view_script = os.path.join(script_dir, "fzf-pick-view.py")
+            pick_view_script = os.path.join(script_dir, "fzf", "fzf-pick-view.py")
             view_input_file  = tmp.name + ".view"
             pick_view_cmd = (
                 f"execute(python3 {pick_view_script} {view_input_file})"
@@ -628,8 +628,8 @@ def aggregate_report(records, dim_keys):
 def grouped_view(records, context="", filters=None):
     """Aggregated fzf view with dimension toggles and drill-down to flat list."""
     script_dir   = _SCRIPT_DIR
-    preview_script = os.path.join(script_dir, "fzf-preview-pipeline.py")
-    save_script    = os.path.join(script_dir, "fzf-save-view.py")
+    preview_script = os.path.join(script_dir, "fzf", "fzf-preview-pipeline.py")
+    save_script    = os.path.join(script_dir, "fzf", "fzf-save-view.py")
     dims = list(DEFAULT_DIMS)
 
     while True:
