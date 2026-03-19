@@ -12,7 +12,7 @@ import sfq
 from shared import (
     BOLD, DIM, GREEN, RESET, YELLOW,
     CACHE_DIR, OPP_CACHE_FILE,
-    DEAL_TYPES, DEFAULT_MANAGER_ID, DEFAULT_TERRITORIES, LIST_FIELD_MAP,
+    DEAL_TYPES, DEFAULT_MANAGER_ID, LIST_FIELD_MAP,
     QUARTER_HELP,
     apply_filters, build_filter_summary, make_filter_parser,
     dump_output, enrich, escape_soql,

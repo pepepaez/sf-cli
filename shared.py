@@ -5,11 +5,9 @@ import html
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
-import textwrap
 from collections import defaultdict
 from datetime import datetime
 
@@ -51,26 +49,32 @@ def save_chatter_cache(opp_id, posts):
 
 
 def fetch_chatter_batch(opp_ids):
-    """Batch fetch chatter for multiple opps (LAST_N_DAYS:7), write to cache."""
+    """Batch fetch chatter for multiple opps, write to local cache.
+
+    Fetches posts from the last CHATTER_DAYS_WINDOW days.
+    Processes opp_ids in chunks of CHATTER_BATCH_SIZE to stay within
+    the Salesforce SOQL IN clause limit.
+    """
     if not opp_ids:
         return 0
     by_opp = defaultdict(list)
-    for i in range(0, len(opp_ids), 100):
-        chunk = opp_ids[i:i + 100]
+    for i in range(0, len(opp_ids), CHATTER_BATCH_SIZE):
+        chunk = opp_ids[i:i + CHATTER_BATCH_SIZE]
         ids_str = ", ".join(f"'{oid}'" for oid in chunk)
         query = (
-            "SELECT ParentId, CreatedBy.Name, CreatedDate, Body, Type "
+            f"SELECT {SF_FIELD_PARENT_ID}, {SF_FIELD_CREATED_BY}, "
+            f"{SF_FIELD_CREATED_DATE}, {SF_FIELD_BODY}, Type "
             "FROM OpportunityFeed "
-            f"WHERE ParentId IN ({ids_str}) "
-            "AND CreatedDate = LAST_N_DAYS:7 "
-            "ORDER BY ParentId, CreatedDate DESC"
+            f"WHERE {SF_FIELD_PARENT_ID} IN ({ids_str}) "
+            f"AND {SF_FIELD_CREATED_DATE} = LAST_N_DAYS:{CHATTER_DAYS_WINDOW} "
+            f"ORDER BY {SF_FIELD_PARENT_ID}, {SF_FIELD_CREATED_DATE} DESC"
         )
         for post in sfq.sf_query(query):
-            pid = post.get("ParentId", "")
+            pid = post.get(SF_FIELD_PARENT_ID, "")
             if pid:
                 by_opp[pid].append(post)
     for opp_id in opp_ids:
-        save_chatter_cache(opp_id, by_opp.get(opp_id, [])[:50])
+        save_chatter_cache(opp_id, by_opp.get(opp_id, [])[:CHATTER_MAX_POSTS])
     return len(opp_ids)
 
 
@@ -79,13 +83,6 @@ def fetch_chatter_batch(opp_ids):
 TYPE_LABELS = {"Up-sell and Retention": "Expansion"}
 TYPE_SHORT = {"New Business": "NB", "Expansion": "Exp"}
 
-DETAIL_FIELDS = [
-    "Id", "Name", "Account.Name", "StageName", "convertCurrency(Amount)",
-    "CurrencyIsoCode", "Territory__c", "Owner.Name", "CloseDate", "Type",
-    "Solution_Strategist1__r.Name", "Supporting_Solution_Strategist__r.Name",
-    "Managerial_Forecast_Category__c", "Competitor__c", "Compelling_Event__c",
-    "NextStep", "CreatedDate", "LastStageChangeDate", "Description",
-]
 
 DETAIL_MAP = {
     "Id": "ID", "Name": "Opportunity", "Account.Name": "Account",
@@ -100,12 +97,23 @@ DETAIL_MAP = {
     "Description": "Description",
 }
 
-LIST_FIELD_MAP = {
-    "Account.Name": "Account", "Name": "Opportunity", "Amount": "ACV (EUR)",
-    "StageName": "Stage", "_type_short": "Type", "_quarter": "Qtr", "CloseDate": "Close",
-    "Owner.Name": "Owner", "Solution_Strategist1__r.Name": "SS",
-    "_note_status": "Status", "_note_activity": "Activity",
-}
+# All available list columns in display order. Single source of truth used by
+# fzf-cols-opps.py, fzf-reload-notes.py, and the default LIST_FIELD_MAP.
+ALL_COLS = [
+    ("Account.Name",                    "Account"),
+    ("Name",                            "Opportunity"),
+    ("Amount",                          "ACV (EUR)"),
+    ("StageName",                       "Stage"),
+    ("_type_short",                     "Type"),
+    ("_quarter",                        "Qtr"),
+    ("CloseDate",                       "Close"),
+    ("Owner.Name",                      "Owner"),
+    ("Solution_Strategist1__r.Name",    "SS"),
+    ("_note_status",                    "Status"),
+    ("_note_activity",                  "Activity"),
+]
+
+LIST_FIELD_MAP = dict(ALL_COLS)
 
 DEFAULT_MANAGER_ID = _config.get("manager_id", "")
 
@@ -230,7 +238,6 @@ def build_filter_summary(args):
         parts.append("all stages")
     return ", ".join(parts) if parts else "all open"
 DEAL_TYPES = _config.get("deal_types", ["New Business", "Up-sell and Retention"])
-DEFAULT_TERRITORIES = _config.get("default_territories", ["North America"])
 QUARTER_HELP = "this, next, this+next, or Q32026/2026Q3/Q3/2026-Q3"
 
 # Aggregation dimensions
@@ -242,6 +249,42 @@ AGG_DIMENSIONS = {
 }
 
 DEFAULT_DIMS = ["type", "quarter"]
+
+# Chatter fetch limits
+# Salesforce SOQL IN clause limit is 100 IDs per query
+CHATTER_BATCH_SIZE = 100
+# How many posts to cache per opportunity (most recent wins)
+CHATTER_MAX_POSTS = 50
+# Window for "recent" chatter fetches (LAST_N_DAYS)
+CHATTER_DAYS_WINDOW = 7
+
+# Cache age thresholds for color-coded freshness indicator in preview
+CHATTER_STALE_DAYS = 7    # yellow at >7d
+CHATTER_VERY_STALE_DAYS = 14  # red at >14d
+
+# Chatter post keywords used to categorise and tag posts
+KEYWORD_NINJA = "NINJA UPDATE"
+KEYWORD_SOLSTRAT = "SOLSTRAT 360"
+
+# Salesforce field names referenced across multiple files
+SF_FIELD_BODY = "Body"
+SF_FIELD_CREATED_DATE = "CreatedDate"
+SF_FIELD_CREATED_BY = "CreatedBy.Name"
+SF_FIELD_PARENT_ID = "ParentId"
+
+# Note capture options (shown in fzf pickers during note entry)
+NOTE_STATUSES = _config.get("note_statuses", ["Active", "Inactive"])
+NOTE_ACTIVITIES = _config.get("note_activities",
+    ["Disco", "Demo", "PoC", "RFP", "Value Case", "Closing Support", "Handover"]
+)
+
+# Note field keys — single source of truth to avoid scattered string literals
+NOTE_KEY_STATUS    = "status"
+NOTE_KEY_ACTIVITY  = "activity"
+NOTE_KEY_CURRENT   = "current"
+NOTE_KEY_NEXT_STEPS = "next_steps"
+NOTE_KEY_RISKS     = "risks"
+NOTE_KEY_DATE      = "_date"
 
 
 # --- ANSI colors (Gruvbox Dark) ---
@@ -448,6 +491,24 @@ def enrich(records):
     return records
 
 
+def enrich_for_display(records, note_lookup=None):
+    """Ensure display-only derived fields are present on already-enriched records.
+
+    Used by fzf reload scripts that receive pre-enriched records from the data
+    file and only need to (re-)inject display fields without a full re-enrich.
+    note_lookup: optional dict of {opp_id: note} to inject Status/Activity.
+    """
+    if note_lookup is None:
+        note_lookup = {}
+    for r in records:
+        r.setdefault("_acv", to_float(r.get("Amount", "")))
+        r.setdefault("_quarter", quarter_from_date(r.get("CloseDate", "")))
+        r.setdefault("_type_short", r.get("Type", ""))
+        note = note_lookup.get(r.get("Id", ""), {})
+        r["_note_status"] = note.get("status", "")
+        r["_note_activity"] = note.get("activity", "")
+
+
 # --- fzf ---
 
 def fzf(items, prompt="", header="", multi=False):
@@ -524,15 +585,6 @@ def format_table_lines(records, field_map, group_cols=0):
 
 # --- Data fetching ---
 
-def fetch_opp_detail(opp_id):
-    fields = ", ".join(DETAIL_FIELDS)
-    query = f"SELECT {fields} FROM Opportunity WHERE Id = '{opp_id}'"
-    records = sfq.sf_query(query)
-    if records:
-        records[0]["Type"] = remap_type(records[0].get("Type", ""))
-    return records[0] if records else None
-
-
 def fetch_chatter(opp_id):
     """Load chatter from local cache and categorize posts.
 
@@ -573,12 +625,12 @@ def fetch_chatter(opp_id):
     last_solstrat_post = None
 
     for p in raw_posts:
-        body = strip_html(p.get("Body", "") or "")
+        body = strip_html(p.get(SF_FIELD_BODY, "") or "")
         if not body.strip():
             continue
         upper = body.upper()
-        is_ninja = "NINJA UPDATE" in upper
-        is_solstrat = "SOLSTRAT 360" in upper
+        is_ninja = KEYWORD_NINJA in upper
+        is_solstrat = KEYWORD_SOLSTRAT in upper
 
         if last_comment is None:
             last_comment = p
@@ -595,11 +647,12 @@ def fetch_chatter(opp_id):
         if post and id(post) not in seen:
             display.append(post)
             seen.add(id(post))
-    display.sort(key=lambda p: p.get("CreatedDate", ""), reverse=True)
+    # Sort by date string — safe because dates are ISO format (YYYY-MM-DD)
+    display.sort(key=lambda p: p.get(SF_FIELD_CREATED_DATE, ""), reverse=True)
 
-    ninja_body = strip_html(last_ninja.get("Body", "") or "") if last_ninja else ""
-    other_body = strip_html(last_other.get("Body", "") or "") if last_other else ""
-    solstrat_raw = strip_html(last_solstrat_post.get("Body", "") or "") if last_solstrat_post else ""
+    ninja_body = strip_html(last_ninja.get(SF_FIELD_BODY, "") or "") if last_ninja else ""
+    other_body = strip_html(last_other.get(SF_FIELD_BODY, "") or "") if last_other else ""
+    solstrat_raw = strip_html(last_solstrat_post.get(SF_FIELD_BODY, "") or "") if last_solstrat_post else ""
     solstrat = parse_solstrat_360(solstrat_raw) if solstrat_raw else None
 
     return {"posts": display, "ninja_body": ninja_body, "other_body": other_body,
@@ -1245,114 +1298,6 @@ def grouped_view(records, context="", filters=None):
                 pass
             continue
 
-
-def print_detail_color(record, field_map):
-    """Print a single record as colored key-value pairs with word wrapping."""
-    items = [(label, str(record.get(key, "") or "")) for key, label in field_map.items()]
-    max_label = max(len(label) for label, _ in items)
-
-    highlight = {"ACV (EUR)", "Stage", "Next Step", "Type"}
-
-    term_width = shutil.get_terminal_size((80, 24)).columns
-    prefix_width = 2 + max_label + 2
-    value_width = term_width - prefix_width
-
-    for label, value in items:
-        if not value:
-            label_str = c(f"{label:>{max_label}}", DIM)
-            print(f"  {label_str}")
-            continue
-
-        if label in highlight:
-            color_codes = (BOLD, YELLOW)
-        elif label == "Account":
-            color_codes = (BOLD, CYAN)
-        elif label == "Opportunity":
-            color_codes = (BOLD, WHITE)
-        elif label == "Solution Strategist":
-            color_codes = (GREEN,)
-        elif label in ("Opp Age", "Stage Duration"):
-            color_codes = (CYAN,)
-        else:
-            color_codes = ()
-
-        if len(value) > value_width and value_width > 20:
-            wrapped = textwrap.wrap(value, width=value_width)
-        else:
-            wrapped = [value]
-
-        label_str = c(f"{label:>{max_label}}", DIM)
-        val_str = c(wrapped[0], *color_codes) if color_codes else wrapped[0]
-        print(f"  {label_str}  {val_str}")
-
-        indent = " " * prefix_width
-        for line in wrapped[1:]:
-            val_str = c(line, *color_codes) if color_codes else line
-            print(f"{indent}{val_str}")
-
-
-def opp_detail_view(opp_id):
-    """Opportunity detail card with chatter."""
-    detail = fetch_opp_detail(opp_id)
-    if not detail:
-        print(f"  Could not load opportunity {opp_id}")
-        input("  Press Enter to go back...")
-        return
-
-    enrich_detail(detail)
-
-    os.system("clear")
-    print()
-    print_detail_color(detail, DETAIL_MAP)
-
-    chatter_data = fetch_chatter(opp_id)
-    chatter = chatter_data["posts"]
-    term_width = shutil.get_terminal_size((80, 24)).columns
-    body_indent = 6
-    body_width = term_width - body_indent - 4
-
-    if chatter:
-        print(f"\n  {c('── Chatter ──', BOLD, MAGENTA)}\n")
-        for i, post in enumerate(chatter):
-            author = post.get("CreatedBy.Name", "Unknown")
-            date = post.get("CreatedDate", "")[:10]
-            body = strip_html(post.get("Body", "") or "(no text)")
-            is_ninja = "NINJA UPDATE" in (body or "").upper()
-
-            age_days = days_since(date)
-            age_str = fmt_duration(age_days) + " ago" if age_days is not None else ""
-
-            if is_ninja:
-                tag = c(" NINJA UPDATE ", BOLD, YELLOW)
-                print(f"  {c(author, BOLD, CYAN)}  {c('•', DIM)}  {c(date, DIM)}  {c(age_str, DIM)}  {tag}")
-            else:
-                print(f"  {c(author, BOLD, CYAN)}  {c('•', DIM)}  {c(date, DIM)}  {c(age_str, DIM)}")
-            print()
-
-            def highlight_mention(m):
-                name = m.group(1).strip()
-                return c('@' + name, BOLD, GREEN)
-
-            body_pad = " " * body_indent
-            for paragraph in body.split("\n"):
-                paragraph = paragraph.strip()
-                if not paragraph:
-                    continue
-                paragraph = re.sub(
-                    r'@([A-Z][\w]*(?:\s+[A-Z][\w]*)*)',
-                    highlight_mention, paragraph)
-                wrapped = _wrap_ansi(paragraph, body_width)
-                for wline in wrapped:
-                    print(f"{body_pad}{wline}")
-
-            if i < len(chatter) - 1:
-                print(f"\n  {c('━' * 64, DIM)}\n")
-            else:
-                print()
-    else:
-        print(f"\n  {c('No chatter posts.', DIM)}\n")
-
-    input(f"\n  {c('Press Enter to go back...', DIM)}")
 
 
 def dump_output(records, output):

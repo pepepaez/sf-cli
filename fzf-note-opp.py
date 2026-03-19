@@ -6,14 +6,12 @@ import subprocess
 import sys
 from datetime import datetime
 
-STATUSES = ["Active", "Inactive"]
-ACTIVITIES = ["Disco", "Demo", "PoC", "RFP", "Value Case", "Closing Support", "Handover"]
-
-GREEN = "\033[1m\033[38;2;142;192;124m"
-YELLOW = "\033[1m\033[38;2;184;187;38m"
-RED = "\033[1m\033[38;2;251;73;52m"
-DIM = "\033[2m"
-RESET = "\033[0m"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from shared import (
+    NOTE_STATUSES as STATUSES,
+    NOTE_ACTIVITIES as ACTIVITIES,
+    GREEN, RESET, YELLOW,
+)
 
 
 def fzf_pick(options, prompt):

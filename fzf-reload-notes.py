@@ -5,32 +5,16 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from shared import format_table_lines, quarter_from_date, to_float
-
-# All available columns in display order (mirrors fzf-cols-opps.py)
-ALL_COLS = [
-    ("Account.Name", "Account"),
-    ("Name", "Opportunity"),
-    ("Amount", "ACV (EUR)"),
-    ("StageName", "Stage"),
-    ("_type_short", "Type"),
-    ("_quarter", "Qtr"),
-    ("CloseDate", "Close"),
-    ("Owner.Name", "Owner"),
-    ("Solution_Strategist1__r.Name", "SS"),
-    ("_note_status", "Status"),
-    ("_note_activity", "Activity"),
-]
-LABEL_TO_KEY = {label: key for key, label in ALL_COLS}
+from shared import ALL_COLS, enrich_for_display, format_table_lines
 
 
 def main():
     if len(sys.argv) < 3:
         return
 
-    data_file      = sys.argv[1]
-    notes_file     = sys.argv[2]
-    cols_file      = sys.argv[3] if len(sys.argv) > 3 else None
+    data_file  = sys.argv[1]
+    notes_file = sys.argv[2]
+    cols_file  = sys.argv[3] if len(sys.argv) > 3 else None
 
     try:
         with open(data_file, encoding="utf-8") as f:
@@ -47,14 +31,7 @@ def main():
         except (json.JSONDecodeError, FileNotFoundError):
             pass
 
-    # Inject updated note fields
-    for r in records:
-        note = note_lookup.get(r.get("Id", ""), {})
-        r["_note_status"] = note.get("status", "")
-        r["_note_activity"] = note.get("activity", "")
-        r.setdefault("_acv", to_float(r.get("Amount", "")))
-        r.setdefault("_quarter", quarter_from_date(r.get("CloseDate", "")))
-        r.setdefault("_type_short", r.get("Type", ""))
+    enrich_for_display(records, note_lookup)
 
     # Write updated records back so preview stays in sync
     with open(data_file, "w", encoding="utf-8") as f:
@@ -69,10 +46,10 @@ def main():
         except FileNotFoundError:
             pass
 
-    if labels:
-        field_map = {key: label for key, label in ALL_COLS if label in labels} or dict(ALL_COLS)
-    else:
-        field_map = dict(ALL_COLS)
+    field_map = (
+        {key: label for key, label in ALL_COLS if label in labels} or dict(ALL_COLS)
+        if labels else dict(ALL_COLS)
+    )
 
     TAB = "\t"
     header, sep, lines = format_table_lines(records, field_map)
