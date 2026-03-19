@@ -328,6 +328,7 @@ def opp_list_view(opps, context="", filters=None):
                 f"{_key('enter', ORANGE)} note"
                 f"  {_key('ctrl-n', ORANGE)} all notes"
                 f"  {_key('ctrl-r', ORANGE)} chatter"
+                f"  {_key('ctrl-o', ORANGE)} open in SF"
                 f"  {_key('ctrl-l', ORANGE)} views"
                 f"  {_key('ctrl-u', ORANGE)} refilter"
                 f"  {_key('ctrl-v', ORANGE)} save view"
@@ -392,6 +393,10 @@ def opp_list_view(opps, context="", filters=None):
 
             notes_history_cmd = f"execute(python3 {notes_history_script} {notes_file})"
 
+            # Open selected opp in Salesforce Lightning
+            open_opp_script = os.path.join(script_dir, "fzf", "fzf-open-opp.py")
+            open_opp_cmd = f"execute(python3 {open_opp_script} {tmp.name} {{1}})"
+
             chatter_refresh_cmd = (
                 f"execute(python3 {chatter_refresh_script} {opp_ids_file})"
                 f"+refresh-preview"
@@ -437,6 +442,7 @@ def opp_list_view(opps, context="", filters=None):
                    "--bind", f"ctrl-x:{cols_picker}+{cols_reload}",
                    "--bind", f"ctrl-n:{notes_history_cmd}",
                    "--bind", f"ctrl-r:{chatter_refresh_cmd}",
+                   "--bind", f"ctrl-o:{open_opp_cmd}",
                    "--bind", f"ctrl-l:{pick_view_cmd}",
                    "--bind", f"ctrl-u:{refilter_cmd}",
                    "--bind", f"ctrl-v:{save_view_cmd}",
