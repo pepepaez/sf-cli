@@ -4,7 +4,8 @@ import json
 import os
 import sys
 
-VIEWS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "views.yaml")
+_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VIEWS_PATH = os.path.join(_ROOT_DIR, "views.yaml")
 
 
 def format_value(val):
@@ -26,7 +27,7 @@ def main():
     name_file = sys.argv[2]
 
     try:
-        with open(name_file) as f:
+        with open(name_file, encoding="utf-8") as f:
             name = f.read().strip()
     except FileNotFoundError:
         return
@@ -35,7 +36,7 @@ def main():
         return
 
     try:
-        with open(filters_file) as f:
+        with open(filters_file, encoding="utf-8") as f:
             filters = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return
@@ -50,7 +51,7 @@ def main():
 
     # Check if view already exists and remove it
     if os.path.exists(VIEWS_PATH):
-        with open(VIEWS_PATH) as f:
+        with open(VIEWS_PATH, encoding="utf-8") as f:
             existing = f.readlines()
 
         # Remove existing view block
@@ -63,19 +64,18 @@ def main():
                 if view_name == name:
                     skip = True
                     continue
-                else:
-                    skip = False
+                skip = False
             elif skip and (line.startswith("  ") or stripped == ""):
                 continue
             else:
                 skip = False
             new_lines.append(line)
 
-        with open(VIEWS_PATH, "w") as f:
+        with open(VIEWS_PATH, "w", encoding="utf-8") as f:
             f.writelines(new_lines)
 
     # Append new view
-    with open(VIEWS_PATH, "a") as f:
+    with open(VIEWS_PATH, "a", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
     print(f"  View '{name}' saved.")

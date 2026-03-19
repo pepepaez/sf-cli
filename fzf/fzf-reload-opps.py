@@ -5,7 +5,7 @@ import os
 import shlex
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared import (
     DIM, RESET,
     OPP_CACHE_FILE, DEAL_TYPES, LIST_FIELD_MAP,
@@ -28,7 +28,7 @@ def main():
 
     # Read the typed filter string
     try:
-        with open(filter_file) as f:
+        with open(filter_file, encoding="utf-8") as f:
             filter_str = f.read().strip()
     except FileNotFoundError:
         filter_str = ""
@@ -48,7 +48,7 @@ def main():
     # Load from cache
     if not os.path.exists(OPP_CACHE_FILE):
         return
-    with open(OPP_CACHE_FILE) as f:
+    with open(OPP_CACHE_FILE, encoding="utf-8") as f:
         records = json.load(f)["records"]
 
     # Filter + enrich
@@ -61,7 +61,7 @@ def main():
     note_lookup = {}
     if notes_file and os.path.exists(notes_file):
         try:
-            with open(notes_file) as f:
+            with open(notes_file, encoding="utf-8") as f:
                 note_lookup = json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
             pass
@@ -75,26 +75,26 @@ def main():
     preview_data = [{k: v for k, v in r.items()
                      if not k.startswith("_") or k in _include_private}
                     for r in records]
-    with open(data_file, "w") as f:
+    with open(data_file, "w", encoding="utf-8") as f:
         json.dump(preview_data, f)
 
     # Update context file
     filter_summary = build_filter_summary(args)
-    with open(context_file, "w") as f:
+    with open(context_file, "w", encoding="utf-8") as f:
         f.write(f"{DIM}{filter_summary}{RESET}")
 
     # Update acv and lines files for border label
     TAB = "\t"
     header, sep, lines = format_table_lines(records, LIST_FIELD_MAP)
     numbered_lines = [f"{i:04d}{TAB}{line}" for i, line in enumerate(lines)]
-    with open(acv_file, "w") as f:
+    with open(acv_file, "w", encoding="utf-8") as f:
         json.dump([r["_acv"] for r in records], f)
-    with open(lines_file, "w") as f:
+    with open(lines_file, "w", encoding="utf-8") as f:
         f.write("\n".join(numbered_lines))
 
     # Update opp IDs file for chatter refresh
     if opp_ids_file:
-        with open(opp_ids_file, "w") as f:
+        with open(opp_ids_file, "w", encoding="utf-8") as f:
             json.dump([r.get("Id", "") for r in records if r.get("Id")], f)
 
     # Output new table lines to stdout (fzf reload() reads these)

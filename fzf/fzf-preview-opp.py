@@ -6,9 +6,13 @@ import re
 import sys
 import textwrap
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared import (
-    BOLD, CYAN, DIM, GREEN, MAGENTA, WHITE, YELLOW,
+    BOLD, CYAN, DIM, GREEN, MAGENTA, RED, WHITE, YELLOW,
+    BG_GREEN, BG_YELLOW, BG_RED, BG_CYAN,
+    CHATTER_STALE_DAYS, CHATTER_VERY_STALE_DAYS,
+    KEYWORD_NINJA, KEYWORD_SOLSTRAT,
+    SF_FIELD_BODY, SF_FIELD_CREATED_DATE, SF_FIELD_CREATED_BY,
     DETAIL_MAP,
     c, days_since, enrich_detail, fetch_chatter, fmt_duration, remap_type, strip_html, _wrap_ansi,
 )
@@ -110,24 +114,21 @@ def build_chatter_lines_from_posts(posts, width):
         return c('@' + name, BOLD, GREEN)
 
     for i, post in enumerate(posts):
-        author = post.get("CreatedBy.Name", "Unknown")
-        date = post.get("CreatedDate", "")[:10]
-        body = strip_html(post.get("Body", "") or "(no text)")
+        author = post.get(SF_FIELD_CREATED_BY, "Unknown")
+        date = post.get(SF_FIELD_CREATED_DATE, "")[:10]
+        body = strip_html(post.get(SF_FIELD_BODY, "") or "(no text)")
         upper = (body or "").upper()
-        is_ninja = "NINJA UPDATE" in upper
-        is_solstrat = "SOLSTRAT 360" in upper
+        is_ninja = KEYWORD_NINJA in upper
+        is_solstrat = KEYWORD_SOLSTRAT in upper
 
         age_days = days_since(date)
         age_str = fmt_duration(age_days) + " ago" if age_days is not None else ""
 
-        # Color-code age: green ≤7d, yellow 8-14d, red >14d
+        # Color-code by cache freshness: green ≤STALE, yellow ≤VERY_STALE, red beyond
         if age_days is not None and age_str:
-            BG_GREEN = "\033[42;30m"   # green bg, black fg
-            BG_YELLOW = "\033[43;30m"  # yellow bg, black fg
-            BG_RED = "\033[41;30m"     # red bg, black fg
-            if age_days <= 7:
+            if age_days <= CHATTER_STALE_DAYS:
                 age_styled = c(f" {age_str} ", BG_GREEN)
-            elif age_days <= 14:
+            elif age_days <= CHATTER_VERY_STALE_DAYS:
                 age_styled = c(f" {age_str} ", BG_YELLOW)
             else:
                 age_styled = c(f" {age_str} ", BG_RED)
@@ -138,7 +139,6 @@ def build_chatter_lines_from_posts(posts, width):
             tag = c(" NINJA UPDATE ", BOLD, YELLOW)
             lines.append(f"  {c(author, BOLD, CYAN)}  {c('•', DIM)}  {c(date, DIM)}  {age_styled}  {tag}")
         elif is_solstrat:
-            BG_CYAN = "\033[46;30m"
             tag = c(" SOLSTRAT 360 ", BG_CYAN, BOLD)
             lines.append(f"  {c(author, BOLD, CYAN)}  {c('•', DIM)}  {c(date, DIM)}  {age_styled}  {tag}")
         else:
@@ -179,7 +179,6 @@ def merge_side_by_side(left_lines, right_lines, left_width, sep="│"):
 
 def build_note_lines(note, width):
     """Build SOLSTRAT 360 note display lines."""
-    BG_CYAN = "\033[46;30m"  # cyan bg, black fg
     lines = []
     lines.append("")
     note_date = note.get("_date", "")
@@ -210,7 +209,7 @@ def build_note_lines(note, width):
         elif label == "Activity":
             val_str = c(value, BOLD, CYAN)
         elif label == "Risks":
-            val_str = c(value, BOLD, "\033[38;2;251;73;52m")  # red
+            val_str = c(value, BOLD, RED)
         else:
             val_str = value
         # Wrap long values
@@ -291,7 +290,7 @@ def main():
     posts = chatter_data["posts"]
     if solstrat_parsed:
         posts = [p for p in posts
-                 if "SOLSTRAT 360" not in (strip_html(p.get("Body", "") or "")).upper()]
+                 if KEYWORD_SOLSTRAT not in (strip_html(p.get(SF_FIELD_BODY, "") or "")).upper()]
 
     if not has_cache:
         chatter_lines = [
@@ -302,8 +301,7 @@ def main():
     elif posts:
         chatter_lines = build_chatter_lines_from_posts(posts, right_width)
         # Inject age indicator after header
-        BG_RED = "\033[41;30m"
-        if cache_age is not None and cache_age > 7:
+        if cache_age is not None and cache_age > CHATTER_STALE_DAYS:
             age_line = f"  {c(f' {cache_age}d old — ctrl-c to refresh ', BG_RED)}"
         else:
             age_line = f"  {c(fetched_at, DIM)}"

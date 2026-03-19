@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared import BOLD, CYAN, DIM, GREEN, RESET, c
 
 
@@ -56,21 +56,21 @@ def main():
             idx = int(sys.argv[3])
         except (ValueError, IndexError):
             return
-        with open(entries_file) as f:
+        with open(entries_file, encoding="utf-8") as f:
             entries = json.load(f)
         print(build_preview(entries, idx))
         return
 
     # Main mode: show fzf list of all notes
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    history_file = os.path.join(script_dir, "notes_history.json")
+    _root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    history_file = os.path.join(_root_dir, "notes_history.json")
     notes_file = sys.argv[1] if len(sys.argv) > 1 else None
 
     # Load history
     history = []
     if os.path.exists(history_file):
         try:
-            with open(history_file) as f:
+            with open(history_file, encoding="utf-8") as f:
                 history = json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
             pass
@@ -79,7 +79,7 @@ def main():
     current_notes = {}
     if notes_file and os.path.exists(notes_file):
         try:
-            with open(notes_file) as f:
+            with open(notes_file, encoding="utf-8") as f:
                 current_notes = json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
             pass

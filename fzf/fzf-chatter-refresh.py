@@ -4,7 +4,7 @@ import json
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared import BOLD, DIM, GREEN, RESET, fetch_chatter_batch
 
 
@@ -12,7 +12,7 @@ def main():
     if len(sys.argv) < 2:
         return
 
-    with open(sys.argv[1]) as f:
+    with open(sys.argv[1], encoding="utf-8") as f:
         opp_ids = json.load(f)
 
     if not opp_ids:

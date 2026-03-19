@@ -4,7 +4,7 @@ import json
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from shared import format_table_lines, LIST_FIELD_MAP, quarter_from_date, to_float
 
 LABEL_TO_KEY = {
@@ -23,14 +23,14 @@ data_file = sys.argv[1]
 choice_file = sys.argv[2]
 
 try:
-    with open(choice_file) as f:
+    with open(choice_file, encoding="utf-8") as f:
         label = f.read().strip()
 except FileNotFoundError:
     label = ""
 
 sort_key = LABEL_TO_KEY.get(label, "Account.Name")
 
-with open(data_file) as f:
+with open(data_file, encoding="utf-8") as f:
     opps = json.load(f)
 
 reverse = sort_key == "Amount"
@@ -44,7 +44,7 @@ def sort_val(r):
 opps.sort(key=sort_val, reverse=reverse)
 
 # Re-write sorted data back so preview indices stay in sync
-with open(data_file, "w") as f:
+with open(data_file, "w", encoding="utf-8") as f:
     json.dump(opps, f)
 
 # Enrich for format_table_lines

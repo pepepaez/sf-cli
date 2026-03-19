@@ -22,7 +22,10 @@ def pick_column(records, field_map, prompt="Select column: "):
     columns = get_columns(records, field_map)
     labels = [f"{label}  ({key})" for key, label in columns]
     selected = sfq.fzf_select(labels, prompt=prompt)
-    idx = labels.index(selected)
+    try:
+        idx = labels.index(selected)
+    except ValueError:
+        sys.exit(0)
     return columns[idx]
 
 
@@ -33,7 +36,10 @@ def pick_columns(records, field_map, prompt="Select columns (Tab to multi-select
     selected = sfq.fzf_select(labels, prompt=prompt, multi=True)
     result = []
     for sel in selected:
-        idx = labels.index(sel)
+        try:
+            idx = labels.index(sel)
+        except ValueError:
+            continue
         result.append(columns[idx])
     return result
 
