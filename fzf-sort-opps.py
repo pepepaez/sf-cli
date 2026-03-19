@@ -51,6 +51,9 @@ with open(data_file, "w") as f:
 for r in opps:
     r["_acv"] = to_float(r.get("Amount", ""))
     r["_quarter"] = r.get("_quarter") or quarter_from_date(r.get("CloseDate", ""))
+    r.setdefault("_type_short", r.get("Type", ""))
+    r.setdefault("_note_status", "")
+    r.setdefault("_note_activity", "")
 
 header, sep, lines = format_table_lines(opps, LIST_FIELD_MAP)
 print(f"____\t{header}")

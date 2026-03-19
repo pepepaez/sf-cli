@@ -8,10 +8,9 @@ import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shared import (
-    BOLD, CYAN, DIM, GREEN, MAGENTA, RESET, WHITE, YELLOW,
+    BOLD, CYAN, DIM, GREEN, MAGENTA, WHITE, YELLOW,
     DETAIL_MAP,
-    c, days_since, enrich_detail, fetch_chatter, parse_solstrat_360,
-    fmt_duration, fmt_eur, remap_type, strip_html, to_float, _wrap_ansi,
+    c, days_since, enrich_detail, fetch_chatter, fmt_duration, remap_type, strip_html, _wrap_ansi,
 )
 
 
@@ -286,15 +285,35 @@ def main():
         solstrat_parsed = True
 
     # Build chatter display — exclude SOLSTRAT 360 posts when parsed
+    has_cache = chatter_data.get("has_cache", False)
+    cache_age = chatter_data.get("cache_age_days")
+    fetched_at = chatter_data.get("fetched_at", "")
     posts = chatter_data["posts"]
     if solstrat_parsed:
         posts = [p for p in posts
                  if "SOLSTRAT 360" not in (strip_html(p.get("Body", "") or "")).upper()]
 
-    if posts:
+    if not has_cache:
+        chatter_lines = [
+            f"  {c('── Chatter ──', BOLD, MAGENTA)}", "",
+            f"  {c('No local data', DIM)}",
+            f"  {c('ctrl-c to load', DIM)}",
+        ]
+    elif posts:
         chatter_lines = build_chatter_lines_from_posts(posts, right_width)
+        # Inject age indicator after header
+        BG_RED = "\033[41;30m"
+        if cache_age is not None and cache_age > 7:
+            age_line = f"  {c(f' {cache_age}d old — ctrl-c to refresh ', BG_RED)}"
+        else:
+            age_line = f"  {c(fetched_at, DIM)}"
+        chatter_lines.insert(2, age_line)
     else:
-        chatter_lines = [f"  {c('No chatter posts.', DIM)}"]
+        chatter_lines = [
+            f"  {c('── Chatter ──', BOLD, MAGENTA)}", "",
+            f"  {c('No posts in last 7 days', DIM)}",
+            f"  {c(fetched_at, DIM)}",
+        ]
 
     # Print merged side-by-side
     merged = merge_side_by_side(card_lines, chatter_lines, left_width)

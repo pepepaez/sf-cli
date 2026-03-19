@@ -13,11 +13,13 @@ ALL_COLS = [
     ("Name", "Opportunity"),
     ("Amount", "ACV (EUR)"),
     ("StageName", "Stage"),
-    ("Type", "Type"),
+    ("_type_short", "Type"),
     ("_quarter", "Qtr"),
     ("CloseDate", "Close"),
     ("Owner.Name", "Owner"),
     ("Solution_Strategist1__r.Name", "SS"),
+    ("_note_status", "Status"),
+    ("_note_activity", "Activity"),
 ]
 
 LABEL_TO_KEY = {label: key for key, label in ALL_COLS}
@@ -46,6 +48,10 @@ with open(data_file) as f:
 for r in opps:
     r["_acv"] = to_float(r.get("Amount", ""))
     r["_quarter"] = r.get("_quarter") or quarter_from_date(r.get("CloseDate", ""))
+    # note fields already present in data file — no-op if missing
+    r.setdefault("_type_short", r.get("Type", ""))
+    r.setdefault("_note_status", "")
+    r.setdefault("_note_activity", "")
 
 header, sep, lines = format_table_lines(opps, field_map)
 print(f"____\t{header}")
