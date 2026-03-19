@@ -5,56 +5,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-
-def load_views():
-    views_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "views.yaml")
-    if not os.path.exists(views_path):
-        return {}
-    try:
-        import yaml
-        with open(views_path) as f:
-            return yaml.safe_load(f) or {}
-    except ImportError:
-        views = {}
-        current = None
-        with open(views_path) as f:
-            for line in f:
-                stripped = line.strip()
-                if not stripped or stripped.startswith("#"):
-                    continue
-                if not line.startswith(" ") and stripped.endswith(":"):
-                    current = stripped[:-1]
-                    views[current] = {}
-                elif current and ":" in stripped:
-                    key, val = stripped.split(":", 1)
-                    val = val.strip()
-                    if val.startswith("[") and val.endswith("]"):
-                        val = [v.strip().strip("'\"") for v in val[1:-1].split(",")]
-                    elif val.lower() == "true":
-                        val = True
-                    elif val.lower() == "false":
-                        val = False
-                    elif val.startswith('"') and val.endswith('"'):
-                        val = val[1:-1]
-                    views[current][key.strip()] = val
-        return views
-
-
-def view_to_args_str(view):
-    parts = []
-    if view.get("team"):
-        parts.append("--team")
-    for flag, key in [("--quarter", "quarter"), ("--account", "account"),
-                      ("--ae", "ae"), ("--ninja", "ninja")]:
-        if key in view:
-            parts.append(f"{flag} {view[key]}")
-    for flag, key in [("--type", "type"), ("--stage", "stage"), ("--territory", "territory")]:
-        if key in view:
-            vals = view[key] if isinstance(view[key], list) else [view[key]]
-            quoted = " ".join(f'"{v}"' if " " in str(v) else str(v) for v in vals)
-            parts.append(f"{flag} {quoted}")
-    return "  ".join(parts)
+from shared import load_views, view_to_args_str
 
 
 def main():
@@ -84,7 +35,7 @@ def main():
     if not view:
         return
 
-    with open(output_file, "w") as f:
+    with open(output_file, "w", encoding="utf-8") as f:
         f.write(view_to_args_str(view))
 
 

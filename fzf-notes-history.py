@@ -56,7 +56,7 @@ def main():
             idx = int(sys.argv[3])
         except (ValueError, IndexError):
             return
-        with open(entries_file) as f:
+        with open(entries_file, encoding="utf-8") as f:
             entries = json.load(f)
         print(build_preview(entries, idx))
         return
@@ -70,7 +70,7 @@ def main():
     history = []
     if os.path.exists(history_file):
         try:
-            with open(history_file) as f:
+            with open(history_file, encoding="utf-8") as f:
                 history = json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
             pass
@@ -79,7 +79,7 @@ def main():
     current_notes = {}
     if notes_file and os.path.exists(notes_file):
         try:
-            with open(notes_file) as f:
+            with open(notes_file, encoding="utf-8") as f:
                 current_notes = json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
             pass

@@ -12,7 +12,7 @@ def main():
     if len(sys.argv) < 2:
         return
 
-    with open(sys.argv[1]) as f:
+    with open(sys.argv[1], encoding="utf-8") as f:
         opp_ids = json.load(f)
 
     if not opp_ids:

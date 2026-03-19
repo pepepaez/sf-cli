@@ -22,10 +22,13 @@ _CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.
 
 
 def load_config():
-    """Load config from config.json. Returns empty dict if missing."""
+    """Load config from config.json. Returns empty dict if missing or unreadable."""
     if os.path.exists(_CONFIG_PATH):
-        with open(_CONFIG_PATH) as f:
-            return json.load(f)
+        try:
+            with open(_CONFIG_PATH, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return {}
     return {}
 
 
@@ -42,7 +45,7 @@ OPP_CACHE_FILE = os.path.join(CACHE_DIR, "opps.json")
 def save_chatter_cache(opp_id, posts):
     """Write chatter posts to local cache for an opp."""
     os.makedirs(CHATTER_CACHE_DIR, exist_ok=True)
-    with open(os.path.join(CHATTER_CACHE_DIR, f"{opp_id}.json"), "w") as f:
+    with open(os.path.join(CHATTER_CACHE_DIR, f"{opp_id}.json"), "w", encoding="utf-8") as f:
         json.dump({"fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
                    "posts": posts}, f)
 
@@ -254,6 +257,10 @@ WHITE = "\033[38;2;235;219;178m"    # gruvbox fg
 BLUE = "\033[38;2;131;165;152m"     # gruvbox blue
 ORANGE = "\033[38;2;254;128;25m"    # gruvbox orange
 RED = "\033[38;2;251;73;52m"        # gruvbox red
+BG_GREEN = "\033[42;30m"            # green bg, black fg
+BG_YELLOW = "\033[43;30m"           # yellow bg, black fg
+BG_RED = "\033[41;30m"              # red bg, black fg
+BG_CYAN = "\033[46;30m"             # cyan bg, black fg
 
 
 def c(text, *codes):
@@ -547,7 +554,7 @@ def fetch_chatter(opp_id):
     if not os.path.exists(cache_file):
         return empty
     try:
-        with open(cache_file) as f:
+        with open(cache_file, encoding="utf-8") as f:
             cache = json.load(f)
     except (json.JSONDecodeError, FileNotFoundError):
         return empty
@@ -625,6 +632,66 @@ def parse_solstrat_360(body):
     return note if note else None
 
 
+# --- Views ---
+
+_VIEWS_PATH = os.path.join(_SCRIPT_DIR, "views.yaml")
+
+
+def load_views():
+    """Load saved views from views.yaml. Returns empty dict if missing or unreadable."""
+    if not os.path.exists(_VIEWS_PATH):
+        return {}
+    try:
+        import yaml
+        with open(_VIEWS_PATH, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except ImportError:
+        pass
+    except Exception:
+        return {}
+    views = {}
+    current = None
+    try:
+        with open(_VIEWS_PATH, encoding="utf-8") as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                if not line.startswith(" ") and stripped.endswith(":"):
+                    current = stripped[:-1]
+                    views[current] = {}
+                elif current and ":" in stripped:
+                    k, val = stripped.split(":", 1)
+                    val = val.strip()
+                    if val.startswith("[") and val.endswith("]"):
+                        val = [v.strip().strip("'\"") for v in val[1:-1].split(",")]
+                    elif val.lower() == "true":
+                        val = True
+                    elif val.lower() == "false":
+                        val = False
+                    elif val.startswith('"') and val.endswith('"'):
+                        val = val[1:-1]
+                    views[current][k.strip()] = val
+    except OSError:
+        return {}
+    return views
+
+
+def view_to_args_str(view):
+    """Format a view dict as a CLI args string parseable by make_filter_parser."""
+    parts = []
+    if view.get("team"):
+        parts.append("--team")
+    for flag, k in [("--quarter", "quarter"), ("--account", "account"),
+                    ("--ae", "ae"), ("--ninja", "ninja")]:
+        if k in view:
+            parts.append(f"{flag} {view[k]}")
+    for flag, k in [("--type", "type"), ("--stage", "stage"), ("--territory", "territory")]:
+        if k in view:
+            vals = view[k] if isinstance(view[k], list) else [view[k]]
+            quoted = " ".join(f'"{v}"' if " " in str(v) else str(v) for v in vals)
+            parts.append(f"{flag} {quoted}")
+    return "  ".join(parts)
 
 
 # --- Interactive views ---
@@ -648,14 +715,14 @@ def opp_list_view(opps, context="", filters=None):
 
     # Write opp IDs for batch chatter refresh (stays constant for session)
     opp_ids_file = os.path.join(tempfile.gettempdir(), f"sf_opp_ids_{os.getpid()}.json")
-    with open(opp_ids_file, "w") as f:
+    with open(opp_ids_file, "w", encoding="utf-8") as f:
         json.dump([r.get("Id", "") for r in opps if r.get("Id")], f)
 
     # Load persistent notes from history
     history_file = os.path.join(script_dir, "notes_history.json")
     if os.path.exists(history_file):
         try:
-            with open(history_file) as f:
+            with open(history_file, encoding="utf-8") as f:
                 history = json.load(f)
             if history:
                 # Latest note per opp_id across all sessions
@@ -671,9 +738,9 @@ def opp_list_view(opps, context="", filters=None):
                             clean["current"] = clean.pop("current_status")
                         persistent_notes[opp_id] = clean
                 if persistent_notes:
-                    with open(notes_file, "w") as f:
+                    with open(notes_file, "w", encoding="utf-8") as f:
                         json.dump(persistent_notes, f)
-                    with open(baseline_file, "w") as f:
+                    with open(baseline_file, "w", encoding="utf-8") as f:
                         json.dump(persistent_notes, f)
                     latest_date = max(s.get("date", "") for s in history)
                     print(f"  {DIM}Latest session notes: {latest_date}{RESET}")
@@ -684,7 +751,7 @@ def opp_list_view(opps, context="", filters=None):
     note_lookup = {}
     if os.path.exists(notes_file):
         try:
-            with open(notes_file) as f:
+            with open(notes_file, encoding="utf-8") as f:
                 note_lookup = json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
             pass
@@ -718,9 +785,9 @@ def opp_list_view(opps, context="", filters=None):
             header_script = os.path.join(script_dir, "fzf-header-opps.py")
             acv_file = tmp.name + ".acv"
             lines_file = tmp.name + ".lines"
-            with open(acv_file, "w") as af:
+            with open(acv_file, "w", encoding="utf-8") as af:
                 json.dump([r["_acv"] for r in opps], af)
-            with open(lines_file, "w") as lf:
+            with open(lines_file, "w", encoding="utf-8") as lf:
                 lf.write("\n".join(numbered_lines))
 
             SEP = f"  {DIM}│{RESET}  "
@@ -749,9 +816,9 @@ def opp_list_view(opps, context="", filters=None):
             # Write help line and context to files so ctrl-u reload can update header
             help_line_file = tmp.name + ".helpline"
             context_file = tmp.name + ".context"
-            with open(help_line_file, "w") as f:
+            with open(help_line_file, "w", encoding="utf-8") as f:
                 f.write(help_line)
-            with open(context_file, "w") as f:
+            with open(context_file, "w", encoding="utf-8") as f:
                 f.write(f"{DIM}{context}{RESET}")
 
             fzf_header = (f"{help_line}\n"
@@ -783,7 +850,7 @@ def opp_list_view(opps, context="", filters=None):
             # Save view: write filters to temp, prompt for name, save
             filters_file = tmp.name + ".filters"
             if filters:
-                with open(filters_file, "w") as ff:
+                with open(filters_file, "w", encoding="utf-8") as ff:
                     json.dump(filters, ff)
             view_name_file = tmp.name + ".viewname"
             save_view_cmd = (
@@ -858,7 +925,19 @@ def opp_list_view(opps, context="", filters=None):
             result = subprocess.run(cmd, input="\n".join(fzf_input),
                                     capture_output=True, text=True)
         finally:
-            for tf in [tmp.name, acv_file, lines_file]:
+            for tf in [
+                tmp.name,
+                tmp.name + ".acv",
+                tmp.name + ".lines",
+                tmp.name + ".helpline",
+                tmp.name + ".context",
+                tmp.name + ".sort",
+                tmp.name + ".cols",
+                tmp.name + ".filters",
+                tmp.name + ".viewname",
+                tmp.name + ".view",
+                tmp.name + ".refilter",
+            ]:
                 try:
                     os.unlink(tf)
                 except OSError:
@@ -888,7 +967,7 @@ def _export_session_notes(notes_file, opps, baseline_file=None):
         _cleanup_files(notes_file, baseline_file)
         return
     try:
-        with open(notes_file) as f:
+        with open(notes_file, encoding="utf-8") as f:
             notes = json.load(f)
     except (json.JSONDecodeError, FileNotFoundError):
         _cleanup_files(notes_file, baseline_file)
@@ -901,7 +980,7 @@ def _export_session_notes(notes_file, opps, baseline_file=None):
     baseline = {}
     if baseline_file and os.path.exists(baseline_file):
         try:
-            with open(baseline_file) as f:
+            with open(baseline_file, encoding="utf-8") as f:
                 baseline = json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
             pass
@@ -980,7 +1059,7 @@ def _export_session_notes(notes_file, opps, baseline_file=None):
     history = []
     if os.path.exists(history_file):
         try:
-            with open(history_file) as f:
+            with open(history_file, encoding="utf-8") as f:
                 history = json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
             pass
@@ -998,7 +1077,7 @@ def _export_session_notes(notes_file, opps, baseline_file=None):
         }
     history.append(session_entry)
 
-    with open(history_file, "w") as f:
+    with open(history_file, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2)
     print(f"  {DIM}History saved to notes_history.json{RESET}")
 
@@ -1104,7 +1183,7 @@ def grouped_view(records, context="", filters=None):
             # Save view
             filters_file = tmp.name + ".filters"
             if filters:
-                with open(filters_file, "w") as ff:
+                with open(filters_file, "w", encoding="utf-8") as ff:
                     json.dump(filters, ff)
             view_name_file = tmp.name + ".viewname"
             save_view_cmd = (

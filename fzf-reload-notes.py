@@ -33,7 +33,7 @@ def main():
     cols_file      = sys.argv[3] if len(sys.argv) > 3 else None
 
     try:
-        with open(data_file) as f:
+        with open(data_file, encoding="utf-8") as f:
             records = json.load(f)
     except (json.JSONDecodeError, FileNotFoundError):
         return
@@ -42,7 +42,7 @@ def main():
     note_lookup = {}
     if notes_file and os.path.exists(notes_file):
         try:
-            with open(notes_file) as f:
+            with open(notes_file, encoding="utf-8") as f:
                 note_lookup = json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
             pass
@@ -57,14 +57,14 @@ def main():
         r.setdefault("_type_short", r.get("Type", ""))
 
     # Write updated records back so preview stays in sync
-    with open(data_file, "w") as f:
+    with open(data_file, "w", encoding="utf-8") as f:
         json.dump(records, f)
 
     # Resolve current column selection
     labels = None
     if cols_file and os.path.exists(cols_file):
         try:
-            with open(cols_file) as f:
+            with open(cols_file, encoding="utf-8") as f:
                 labels = [line.strip() for line in f if line.strip()]
         except FileNotFoundError:
             pass

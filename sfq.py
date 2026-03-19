@@ -11,8 +11,11 @@ _CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.
 
 def _load_org():
     if os.path.exists(_CONFIG_PATH):
-        with open(_CONFIG_PATH) as f:
-            return json.load(f).get("org", "")
+        try:
+            with open(_CONFIG_PATH, encoding="utf-8") as f:
+                return json.load(f).get("org", "")
+        except (json.JSONDecodeError, OSError):
+            return ""
     return ""
 
 
@@ -131,13 +134,20 @@ def open_in_vd(records, field_map=None):
         keys = list(records[0].keys())
         headers = keys
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False,
+                                     encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(headers)
         for r in records:
             writer.writerow([r.get(k, "") or "" for k in keys])
         tmp_path = f.name
-    subprocess.run(["vd", tmp_path])
+    try:
+        subprocess.run(["vd", tmp_path])
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 def print_cards(records, field_map=None):

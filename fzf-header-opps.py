@@ -17,7 +17,7 @@ def main():
     lines_file = sys.argv[2]
     query = " ".join(sys.argv[3:]) if len(sys.argv) > 3 else ""
 
-    with open(acv_file) as f:
+    with open(acv_file, encoding="utf-8") as f:
         acv_values = json.load(f)  # list of floats, indexed by line position
 
     total = len(acv_values)
@@ -28,7 +28,7 @@ def main():
         return
 
     # Use fzf --filter to match exactly what fzf shows
-    with open(lines_file) as f:
+    with open(lines_file, encoding="utf-8") as f:
         lines_content = f.read()
 
     result = subprocess.run(

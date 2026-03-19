@@ -50,7 +50,7 @@ def main():
     except ValueError:
         return
 
-    with open(data_file) as f:
+    with open(data_file, encoding="utf-8") as f:
         records = json.load(f)
 
     if line_idx < 0 or line_idx >= len(records):
@@ -95,9 +95,9 @@ def main():
     note = {
         "status": status,
         "activity": activity,
-        "current": current,
-        "next_steps": next_steps,
-        "risks": risks,
+        "current": " ".join(current.splitlines()),
+        "next_steps": " ".join(next_steps.splitlines()),
+        "risks": " ".join(risks.splitlines()),
         "_date": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
 
@@ -105,14 +105,14 @@ def main():
     notes = {}
     if os.path.exists(notes_file):
         try:
-            with open(notes_file) as f:
+            with open(notes_file, encoding="utf-8") as f:
                 notes = json.load(f)
         except (json.JSONDecodeError, FileNotFoundError):
             pass
 
     notes[opp_id] = note
 
-    with open(notes_file, "w") as f:
+    with open(notes_file, "w", encoding="utf-8") as f:
         json.dump(notes, f)
 
     print(f"\n  {YELLOW}Note saved.{RESET}")
