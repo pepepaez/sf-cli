@@ -145,7 +145,7 @@ def load_views():
             return yaml.safe_load(f) or {}
     except ImportError:
         pass
-    except Exception:
+    except (OSError, ValueError):
         return {}
     # Manual fallback parser for environments without PyYAML installed
     views = {}
@@ -285,14 +285,14 @@ def opp_list_view(opps, context="", filters=None):
 
     while True:
         # Write record data to temp file so fzf helper scripts can read it
-        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         _preview_fields = {"_quarter", "_type_short", "_note_status", "_note_activity"}
         preview_data = [
             {k: v for k, v in r.items() if not k.startswith("_") or k in _preview_fields}
             for r in opps
         ]
-        json.dump(preview_data, tmp)
-        tmp.close()
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+        with tmp:
+            json.dump(preview_data, tmp)
 
         try:
             total_acv = sum(r["_acv"] for r in opps)

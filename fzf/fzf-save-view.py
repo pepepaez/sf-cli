@@ -64,8 +64,7 @@ def main():
                 if view_name == name:
                     skip = True
                     continue
-                else:
-                    skip = False
+                skip = False
             elif skip and (line.startswith("  ") or stripped == ""):
                 continue
             else:
