@@ -54,3 +54,9 @@ justin_expansion:
 exp_radha:
   ninja: radha
   type: expansion
+
+next_quarter_late_cycle:
+  quarter: next
+  type: New
+  stage: [3. Value Proposal, 4. Closing]
+  territory: [NA]

@@ -64,7 +64,7 @@ def main():
     if not opp_id:
         return
 
-    print(f"\033[2J\033[H")
+    print("\033[2J\033[H")
     print(f"  {GREEN}SOLSTRAT 360 for:{RESET} {account} — {opp_name}\n")
 
     # 1. Status

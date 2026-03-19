@@ -5,3 +5,4 @@ __pycache__/
 config.json
 notes_history.json
 session_notes*.csv
+cache/

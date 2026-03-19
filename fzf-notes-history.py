@@ -7,7 +7,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from shared import BOLD, CYAN, DIM, GREEN, RESET, YELLOW, c
+from shared import BOLD, CYAN, DIM, GREEN, RESET, c
 
 
 def build_preview(entries, idx):

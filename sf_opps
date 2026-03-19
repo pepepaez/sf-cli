@@ -2,108 +2,45 @@
 """Search and browse opportunities with flexible filters."""
 
 import argparse
-import sys
+import json
 import os
+import sys
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sfq
 from shared import (
-    BOLD, RESET, YELLOW,
+    BOLD, DIM, GREEN, RESET, YELLOW,
+    CACHE_DIR, OPP_CACHE_FILE,
     DEAL_TYPES, DEFAULT_MANAGER_ID, DEFAULT_TERRITORIES, LIST_FIELD_MAP,
     QUARTER_HELP,
-    build_quarter_clause, dump_output, enrich, escape_soql,
+    apply_filters, build_filter_summary, make_filter_parser,
+    dump_output, enrich, escape_soql,
     fmt_eur, fzf, format_table_lines, grouped_view, opp_list_view,
     remap_type, to_float,
 )
 
 OPP_FIELDS = (
     "Account.Name, Name, Id, convertCurrency(Amount), CurrencyIsoCode, "
-    "Territory__c, Owner.Name, CloseDate, StageName, Type, "
-    "Solution_Strategist1__r.Name, Supporting_Solution_Strategist__r.Name, "
+    "Territory__c, Owner.Name, CloseDate, StageName, Type, IsClosed, "
+    "Solution_Strategist1__r.Name, Solution_Strategist1__r.ManagerId, "
+    "Solution_Strategist1__r.Id, Supporting_Solution_Strategist__r.Name, "
     "Managerial_Forecast_Category__c, Competitor__c, Compelling_Event__c, "
     "NextStep, CreatedDate, LastStageChangeDate, Description"
 )
 
 
-def build_query(args):
-    """Build SOQL query from filter arguments."""
-    conditions = [] if (args.all_stages or args.stage) else ["IsClosed = false"]
-
-    if args.account:
-        conditions.append(f"Account.Name LIKE '%{escape_soql(args.account)}%'")
-
-    if args.ae:
-        conditions.append(f"Owner.Name LIKE '%{escape_soql(args.ae)}%'")
-
-    if args.ninja:
-        if args.ninja.lower() == "none":
-            conditions.append("Solution_Strategist1__r.Name = null")
-        else:
-            conditions.append(f"Solution_Strategist1__r.Name LIKE '%{escape_soql(args.ninja)}%'")
-
-    if args.quarter:
-        conditions.append(build_quarter_clause(args.quarter))
-
-    if args.type:
-        if len(args.type) > 1:
-            quoted = ", ".join(f"'{escape_soql(t)}'" for t in args.type)
-            conditions.append(f"Type IN ({quoted})")
-        else:
-            conditions.append(f"Type LIKE '%{escape_soql(args.type[0])}%'")
-
-    if args.stage:
-        if len(args.stage) > 1:
-            quoted = ", ".join(f"'{escape_soql(s)}'" for s in args.stage)
-            conditions.append(f"StageName IN ({quoted})")
-        else:
-            conditions.append(f"StageName LIKE '%{escape_soql(args.stage[0])}%'")
-
-    if args.team:
-        manager_id = args.team
-        conditions.append(
-            f"(Solution_Strategist1__r.ManagerId = '{manager_id}' "
-            f"OR Solution_Strategist1__r.Id = '{manager_id}')"
-        )
-
-    # Territory filter (only when explicitly set)
-    territory_aliases = {"NA": "North America", "EU": "Europe"}
-    if args.territory:
-        resolved = [territory_aliases.get(t.upper(), t) for t in args.territory]
-        quoted = ", ".join(f"'{escape_soql(t)}'" for t in resolved)
-        conditions.append(f"Territory__c IN ({quoted})")
-
-    where = " AND ".join(conditions)
+def build_cache_query():
+    """Broad SOQL query covering prev/current/next year — all filters applied in Python."""
+    year = datetime.now().year
     return (
         f"SELECT {OPP_FIELDS} FROM Opportunity "
-        f"WHERE {where} "
+        f"WHERE CloseDate >= {year - 1}-01-01 AND CloseDate <= {year + 1}-12-31 "
         "ORDER BY Account.Name, CloseDate ASC"
     )
 
 
-def build_filter_summary(args):
-    """Build a human-readable summary of active filters."""
-    parts = []
-    if args.team:
-        parts.append("team")
-    if args.account:
-        parts.append(f"account=\"{args.account}\"")
-    if args.ae:
-        parts.append(f"owner=\"{args.ae}\"")
-    if args.ninja:
-        parts.append(f"ss=\"{args.ninja}\"")
-    if args.quarter:
-        parts.append(f"quarter={args.quarter}")
-    if args.type:
-        types = args.type if isinstance(args.type, list) else [args.type]
-        parts.append(f"type={','.join(types)}")
-    if args.stage:
-        stages = args.stage if isinstance(args.stage, list) else [args.stage]
-        parts.append(f"stage={','.join(stages)}")
-    if args.territory:
-        parts.append(f"territory={','.join(args.territory)}")
-    if args.all_stages:
-        parts.append("all stages")
-    return ", ".join(parts) if parts else "all open"
+
 
 
 def load_views():
@@ -141,6 +78,41 @@ def load_views():
         return views
     with open(views_path) as f:
         return yaml.safe_load(f) or {}
+
+
+def view_to_args_str(view):
+    """Format a view dict as a readable CLI args string."""
+    parts = []
+    if view.get("team"):
+        parts.append("--team")
+    for flag, key in [("--quarter", "quarter"), ("--account", "account"),
+                      ("--ae", "ae"), ("--ninja", "ninja")]:
+        if key in view:
+            parts.append(f"{flag} {view[key]}")
+    for flag, key in [("--type", "type"), ("--stage", "stage"), ("--territory", "territory")]:
+        if key in view:
+            vals = view[key] if isinstance(view[key], list) else [view[key]]
+            quoted = " ".join(f'"{v}"' if " " in str(v) else str(v) for v in vals)
+            parts.append(f"{flag} {quoted}")
+    return "  ".join(parts)
+
+
+def pick_view(views):
+    """Present views in fzf and return the selected view name, or None."""
+    import subprocess
+    if not views:
+        return None
+    name_width = max(len(n) for n in views)
+    lines = [f"{name:<{name_width}}  {view_to_args_str(cfg)}"
+             for name, cfg in views.items()]
+    result = subprocess.run(
+        ["fzf", "--prompt", "View > ", "--height", "40%", "--reverse",
+         "--ansi", "--no-sort", "--header", "Select a view (Enter to launch)"],
+        input="\n".join(lines), capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    return result.stdout.strip().split()[0]
 
 
 def apply_view(args, view):
@@ -182,6 +154,8 @@ def main():
                         help="Filter by territory")
     parser.add_argument("--all-stages", "-A", action="store_true",
                         help="Include closed/won opportunities (all stages)")
+    parser.add_argument("--refresh", action="store_true",
+                        help="Re-fetch data from Salesforce and update local cache")
     parser.add_argument("--vd", action="store_true",
                         help="Open results in VisiData")
     parser.add_argument("--out", metavar="FILE",
@@ -191,6 +165,11 @@ def main():
     # Apply saved view if specified
     if args.view:
         views = load_views()
+        if args.view == "ls":
+            selected = pick_view(views)
+            if not selected:
+                sys.exit(0)
+            args.view = selected
         if args.view not in views:
             available = ", ".join(views.keys()) if views else "(none)"
             print(f"  Unknown view: {args.view}")
@@ -204,16 +183,46 @@ def main():
 
     has_filter = any([args.account, args.ae, args.ninja, args.quarter,
                       args.type, args.stage, args.team, args.territory])
-    if not has_filter:
+    if not has_filter and not args.refresh:
         parser.print_help()
+        sys.exit(0)
+    if args.refresh and not has_filter:
+        # Refresh-only: update cache and exit
+        print("\033[2J\033[H", end="")
+        print(f"\n  {BOLD}{YELLOW}Fetching from Salesforce...{RESET}\n")
+        query = build_cache_query()
+        records = sfq.sf_query(query)
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        fetched_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+        with open(OPP_CACHE_FILE, "w") as f:
+            json.dump({"fetched_at": fetched_at, "records": records}, f)
+        print(f"  {GREEN}Cache updated — {len(records)} records ({fetched_at}){RESET}\n")
         sys.exit(0)
 
     print("\033[2J\033[H", end="")
     filter_summary = build_filter_summary(args)
-    print(f"\n  {BOLD}{YELLOW}⏳ Loading opportunities...{RESET} ({filter_summary})\n")
 
-    query = build_query(args)
-    records = sfq.sf_query(query)
+    # Load from cache or refresh from SF
+    use_cache = not args.refresh and os.path.exists(OPP_CACHE_FILE)
+    if use_cache:
+        with open(OPP_CACHE_FILE) as f:
+            cache_data = json.load(f)
+        records = cache_data["records"]
+        fetched_at = cache_data.get("fetched_at", "")
+        cache_label = f"cache from {fetched_at}"
+        print(f"\n  {DIM}Using local cache ({fetched_at}) — run with --refresh to update{RESET}\n")
+    else:
+        print(f"\n  {BOLD}{YELLOW}Fetching from Salesforce...{RESET} ({filter_summary})\n")
+        query = build_cache_query()
+        records = sfq.sf_query(query)
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        fetched_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+        with open(OPP_CACHE_FILE, "w") as f:
+            json.dump({"fetched_at": fetched_at, "records": records}, f)
+        cache_label = f"refreshed {fetched_at}"
+
+    # Apply Python-side user filters
+    records = apply_filters(records, args)
 
     # Apply deal types filter before enrich (which remaps type names)
     if DEAL_TYPES:
@@ -221,7 +230,7 @@ def main():
 
     records = enrich(records)
 
-    print(f"\033[2A\033[K  {len(records)} opportunities ({filter_summary})\n")
+    print(f"\033[2A\033[K  {len(records)} opportunities ({filter_summary}) · {cache_label}\n")
 
     if not records:
         return

@@ -5,7 +5,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from shared import BOLD, CYAN, DIM, GREEN, RESET, YELLOW, c, fmt_eur
+from shared import BOLD, CYAN, DIM, YELLOW, c
 
 
 # Base fields to show, in order.  Keys map to display labels.
