@@ -55,6 +55,23 @@ def _quarter_date_clause(q, year):
     return f"(CloseDate >= {start} AND CloseDate < {end})"
 
 
+def _spec_to_quarter_set(spec):
+    """Convert a single quarter spec to a set of 'Qn YYYY' strings for client-side filtering."""
+    s = spec.strip().lower()
+    if s == "this":
+        return {_current_quarter()}
+    if s == "next":
+        return {_next_quarter()}
+    if s in ("this+next", "thisnext"):
+        return {_current_quarter(), _next_quarter()}
+    m = re.match(r'^(\d{4})$', s)
+    if m:
+        year = int(m.group(1))
+        return {f"Q{q} {year}" for q in range(1, 5)}
+    qn, yr = _parse_quarter(spec)
+    return {f"Q{qn} {yr}"} if qn else set()
+
+
 def build_quarter_clause(spec):
     """Build a SOQL date clause from a quarter spec string."""
     raw = spec.strip().lower()
@@ -64,6 +81,10 @@ def build_quarter_clause(spec):
         return "CloseDate = NEXT_QUARTER"
     if raw in ("this+next", "thisnext"):
         return "(CloseDate = THIS_QUARTER OR CloseDate = NEXT_QUARTER)"
+    m = re.match(r'^(\d{4})$', raw)
+    if m:
+        year = int(m.group(1))
+        return f"(CloseDate >= {year}-01-01 AND CloseDate < {year + 1}-01-01)"
 
     q, year = _parse_quarter(spec)
     if q:
@@ -72,6 +93,19 @@ def build_quarter_clause(spec):
     print(f"Unknown quarter: {spec}", file=sys.stderr)
     print(f"Options: {QUARTER_HELP}", file=sys.stderr)
     sys.exit(1)
+
+
+# --- Stage presets ---
+
+_STAGE_PRESETS = {
+    "qualified": lambda s: not s.startswith("0."),
+    "open":      lambda s: not (s.startswith("0.") or s.startswith("5.") or s.startswith("6.")),
+    "closed":    lambda s: s.startswith("5.") or s.startswith("6."),
+    "won":       lambda s: s.startswith("5."),
+    "lost":      lambda s: s.startswith("6."),
+}
+
+STAGE_PRESET_HELP = "qualified, open, closed, won, lost"
 
 
 # --- Filter parser ---
@@ -83,7 +117,7 @@ def make_filter_parser():
     p.add_argument("--account", "-a")
     p.add_argument("--ae")
     p.add_argument("--ninja", "-n")
-    p.add_argument("--quarter", "-q")
+    p.add_argument("--quarter", "-q", nargs="+")
     p.add_argument("--type", "-t", nargs="+")
     p.add_argument("--stage", "-s", nargs="+")
     p.add_argument("--team", nargs="?", const=DEFAULT_MANAGER_ID, default=None)
@@ -112,22 +146,17 @@ def apply_filters(records, args):
     if args.ninja:
         if args.ninja.lower() == "none":
             result = [r for r in result if not r.get("Solution_Strategist1__r.Name")]
+        elif args.ninja.lower() == "assigned":
+            result = [r for r in result if r.get("Solution_Strategist1__r.Name")]
         else:
             q = args.ninja.lower()
             result = [r for r in result
                       if q in (r.get("Solution_Strategist1__r.Name", "") or "").lower()]
 
     if args.quarter:
-        spec = args.quarter.strip().lower()
-        if spec == "this":
-            targets = {_current_quarter()}
-        elif spec == "next":
-            targets = {_next_quarter()}
-        elif spec in ("this+next", "thisnext"):
-            targets = {_current_quarter(), _next_quarter()}
-        else:
-            qn, yr = _parse_quarter(args.quarter)
-            targets = {f"Q{qn} {yr}"} if qn else set()
+        targets = set()
+        for spec in args.quarter:
+            targets |= _spec_to_quarter_set(spec)
         result = [r for r in result if quarter_from_date(r.get("CloseDate", "")) in targets]
 
     if args.type:
@@ -139,12 +168,20 @@ def apply_filters(records, args):
             result = [r for r in result if q in (r.get("Type", "") or "").lower()]
 
     if args.stage:
-        if len(args.stage) > 1:
-            stages = {s.lower() for s in args.stage}
-            result = [r for r in result if (r.get("StageName", "") or "").lower() in stages]
-        else:
-            q = args.stage[0].lower()
-            result = [r for r in result if q in (r.get("StageName", "") or "").lower()]
+        preset_preds = [_STAGE_PRESETS[s.lower()] for s in args.stage if s.lower() in _STAGE_PRESETS]
+        literals = [s.lower() for s in args.stage if s.lower() not in _STAGE_PRESETS]
+        literal_set = set(literals)
+        single_literal = len(literals) == 1 and not preset_preds
+
+        def _stage_ok(r):
+            stage = r.get("StageName", "") or ""
+            if any(pred(stage) for pred in preset_preds):
+                return True
+            if single_literal:
+                return literals[0] in stage.lower()
+            return stage.lower() in literal_set
+
+        result = [r for r in result if _stage_ok(r)]
 
     if args.team:
         mid = args.team
@@ -174,7 +211,8 @@ def build_filter_summary(args):
     if args.ninja:
         parts.append(f"ss=\"{args.ninja}\"")
     if args.quarter:
-        parts.append(f"quarter={args.quarter}")
+        quarters = args.quarter if isinstance(args.quarter, list) else [args.quarter]
+        parts.append(f"quarter={','.join(quarters)}")
     if args.type:
         types = args.type if isinstance(args.type, list) else [args.type]
         parts.append(f"type={','.join(types)}")

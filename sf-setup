@@ -35,11 +35,33 @@ def get_default_org():
     return None
 
 
-def check_sf_cli():
-    """Check if sf CLI is installed."""
+def check_dependencies():
+    """Check that required tools and packages are installed."""
+    ok = True
+
     result = subprocess.run(["which", "sf"], capture_output=True, text=True)
     if result.returncode != 0:
-        print("  sf CLI not found. Install it: https://developer.salesforce.com/tools/salesforcecli")
+        print("  ✗ sf CLI not found. Install it: https://developer.salesforce.com/tools/salesforcecli")
+        ok = False
+    else:
+        print("  ✓ sf CLI found")
+
+    result = subprocess.run(["which", "fzf"], capture_output=True, text=True)
+    if result.returncode != 0:
+        print("  ✗ fzf not found. Install it: brew install fzf")
+        ok = False
+    else:
+        print("  ✓ fzf found")
+
+    try:
+        import yaml  # noqa: F401
+        print("  ✓ pyyaml found")
+    except ImportError:
+        print("  ✗ pyyaml not found. Install it: pip install pyyaml")
+        ok = False
+
+    if not ok:
+        print("\n  Please install the missing dependencies and re-run setup.")
         sys.exit(1)
 
 
@@ -56,8 +78,9 @@ def sf_login():
 def main():
     print("\n  sf-cli setup\n")
 
-    # Step 0: Check sf CLI is installed
-    check_sf_cli()
+    # Step 0: Check all dependencies
+    check_dependencies()
+    print()
 
     # Step 1: Authenticate with Salesforce
     existing = {}
@@ -141,13 +164,23 @@ def main():
         manager_id = user["ManagerId"]
         print(f"\n  Using your manager's ID: {manager_id}")
 
-    # Step 4: Write config
-    config = {
+    # Step 4: Write config — preserve any existing custom keys, update identity fields
+    config = existing.copy()
+    config.update({
         "org": org,
         "manager_id": manager_id,
         "user_id": user["Id"],
         "user_name": user["Name"],
-    }
+    })
+
+    # Set defaults for keys that must be present (never overwrite if already set)
+    config.setdefault("deal_types", ["New Business", "Up-sell and Retention"])
+    config.setdefault("note_statuses", ["Active", "Inactive"])
+    config.setdefault("note_activities", [
+        "Disco", "Demo (POM)", "PoC (POM)", "Agents Demo", "Agents Setup",
+        "Agents Readout", "RFP", "Value Case", "Closing Support",
+        "Handover", "Not Started", "Stalled", "<empty>",
+    ])
 
     with open(CONFIG_PATH, "w") as f:
         json.dump(config, f, indent=2)

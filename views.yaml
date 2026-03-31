@@ -60,3 +60,21 @@ next_quarter_late_cycle:
   type: New
   stage: [3. Value Proposal, 4. Closing]
   territory: [NA]
+
+unassigned_new_business:
+  ninja: none
+  territory: [North America]
+  type: New
+  stage: [1. Qualified Prospect, 2. Value Scenario, 3. Value Proposal, 4. Closing]
+]
+
+working_deals:
+  ninja: assigned
+  quarter: [2026]
+  stage: open
+  territory: [NA]
+
+portfolio:
+  team: true
+  quarter: [2026, 2027]
+  stage: open

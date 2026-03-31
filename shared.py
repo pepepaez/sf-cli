@@ -46,7 +46,7 @@ from constants import (                                                     # no
     TYPE_LABELS, DETAIL_MAP, ALL_COLS,                                     # noqa: F401
     DEFAULT_MANAGER_ID, DEAL_TYPES, QUARTER_HELP,                          # noqa: F401
     CHATTER_BATCH_SIZE, CHATTER_MAX_POSTS, CHATTER_DAYS_WINDOW,            # noqa: F401
-    CHATTER_STALE_DAYS, CHATTER_VERY_STALE_DAYS,                           # noqa: F401
+    CHATTER_INITIAL_POSTS, CHATTER_STALE_DAYS, CHATTER_VERY_STALE_DAYS,   # noqa: F401
     KEYWORD_NINJA, KEYWORD_SOLSTRAT,                                       # noqa: F401
     SF_FIELD_BODY, SF_FIELD_CREATED_DATE,                                  # noqa: F401
     SF_FIELD_CREATED_BY, SF_FIELD_PARENT_ID,                               # noqa: F401
@@ -59,11 +59,12 @@ from formatting import (                                                    # no
 )
 from filters import (                                                       # noqa: F401
     make_filter_parser, apply_filters, build_filter_summary,               # noqa: F401
-    build_quarter_clause,                                                   # noqa: F401
+    build_quarter_clause, STAGE_PRESET_HELP,                               # noqa: F401
 )
 from chatter import (                                                       # noqa: F401
     CACHE_DIR, CHATTER_CACHE_DIR, OPP_CACHE_FILE,                          # noqa: F401
-    save_chatter_cache, fetch_chatter_batch, parse_solstrat_360,           # noqa: F401
+    save_chatter_cache, fetch_chatter_batch,                               # noqa: F401
+    fetch_chatter_smart, parse_solstrat_360,                               # noqa: F401
 )
 
 # --- Config ---
@@ -243,45 +244,23 @@ def opp_list_view(opps, context="", filters=None):
         json.dump([r.get("Id", "") for r in opps if r.get("Id")], f)
 
     # Load latest note per opp from history into the session notes file
-    history_file = os.path.join(script_dir, "notes_history.json")
-    if os.path.exists(history_file):
+    persistent_notes = load_latest_notes()
+    if persistent_notes:
+        with open(notes_file, "w", encoding="utf-8") as f:
+            json.dump(persistent_notes, f)
+        with open(baseline_file, "w", encoding="utf-8") as f:
+            json.dump(persistent_notes, f)
+        history_file = os.path.join(_SCRIPT_DIR, "notes_history.json")
         try:
             with open(history_file, encoding="utf-8") as f:
                 history = json.load(f)
-            if history:
-                persistent_notes = {}
-                for session in history:
-                    session_date = session.get("date", "")
-                    for opp_id, note in session.get("notes", {}).items():
-                        clean = {k: v for k, v in note.items()
-                                 if k not in ("account", "opportunity")}
-                        clean["_date"] = session_date
-                        # Migrate old field name from earlier schema version
-                        if "current_status" in clean and "current" not in clean:
-                            clean["current"] = clean.pop("current_status")
-                        persistent_notes[opp_id] = clean
-                if persistent_notes:
-                    with open(notes_file, "w", encoding="utf-8") as f:
-                        json.dump(persistent_notes, f)
-                    with open(baseline_file, "w", encoding="utf-8") as f:
-                        json.dump(persistent_notes, f)
-                    latest_date = max(s.get("date", "") for s in history)
-                    print(f"  {DIM}Latest session notes: {latest_date}{RESET}")
+            latest_date = max(s.get("date", "") for s in history)
+            print(f"  {DIM}Latest session notes: {latest_date}{RESET}")
         except (json.JSONDecodeError, FileNotFoundError):
             pass
 
     # Inject note Status/Activity columns into the opp records for table display
-    note_lookup = {}
-    if os.path.exists(notes_file):
-        try:
-            with open(notes_file, encoding="utf-8") as f:
-                note_lookup = json.load(f)
-        except (json.JSONDecodeError, FileNotFoundError):
-            pass
-    for r in opps:
-        note = note_lookup.get(r.get("Id", ""), {})
-        r["_note_status"]   = note.get("status", "")
-        r["_note_activity"] = note.get("activity", "")
+    inject_notes(opps, persistent_notes)
 
     while True:
         # Write record data to temp file so fzf helper scripts can read it
@@ -757,6 +736,42 @@ def grouped_view(records, context="", filters=None):
             except (ValueError, IndexError):
                 pass
             continue
+
+
+# --- Notes ---
+
+def load_latest_notes():
+    """Load the most recent note per opp from notes_history.json.
+
+    Returns a dict of {opp_id: note_dict} where each note has the latest
+    values from the history file. Returns empty dict if no history exists.
+    """
+    history_file = os.path.join(_SCRIPT_DIR, "notes_history.json")
+    if not os.path.exists(history_file):
+        return {}
+    try:
+        with open(history_file, encoding="utf-8") as f:
+            history = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {}
+    notes = {}
+    for session in history:
+        session_date = session.get("date", "")
+        for opp_id, note in session.get("notes", {}).items():
+            clean = {k: v for k, v in note.items() if k not in ("account", "opportunity")}
+            clean["_date"] = session_date
+            if "current_status" in clean and "current" not in clean:
+                clean["current"] = clean.pop("current_status")
+            notes[opp_id] = clean
+    return notes
+
+
+def inject_notes(records, note_lookup):
+    """Inject _note_status and _note_activity from note_lookup into records in-place."""
+    for r in records:
+        note = note_lookup.get(r.get("Id", ""), {})
+        r["_note_status"]   = note.get("status", "")
+        r["_note_activity"] = note.get("activity", "")
 
 
 # --- Output ---

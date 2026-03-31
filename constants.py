@@ -61,7 +61,7 @@ LIST_FIELD_MAP = dict(ALL_COLS)
 
 DEFAULT_MANAGER_ID = _config.get("manager_id", "")
 DEAL_TYPES = _config.get("deal_types", ["New Business", "Up-sell and Retention"])
-QUARTER_HELP = "this, next, this+next, or Q32026/2026Q3/Q3/2026-Q3"
+QUARTER_HELP = "this, next, this+next, Q32026/2026Q3/Q3/2026-Q3, or 2026 (full year)"
 
 # --- Aggregation dimensions ---
 
@@ -82,6 +82,8 @@ CHATTER_BATCH_SIZE = 100
 CHATTER_MAX_POSTS = 50
 # Window for "recent" chatter fetches (LAST_N_DAYS)
 CHATTER_DAYS_WINDOW = 7
+# Posts to fetch when no local cache exists yet
+CHATTER_INITIAL_POSTS = 3
 
 # Cache age thresholds for color-coded freshness indicator in preview
 CHATTER_STALE_DAYS = 7     # orange/yellow at >7d
@@ -103,7 +105,7 @@ SF_FIELD_PARENT_ID = "ParentId"
 
 NOTE_STATUSES = _config.get("note_statuses", ["Active", "Inactive"])
 NOTE_ACTIVITIES = _config.get("note_activities",
-    ["Disco", "Demo", "PoC", "RFP", "Value Case", "Closing Support", "Handover"]
+    ["Disco", "Demo (POM)", "PoC (POM)", "Agents Demo", "Agents Setup", "Agents Readout", "RFP", "Value Case", "Closing Support", "Handover", "Not Started", "Stalled", "<empty>"]
 )
 
 # Note field keys — single source of truth to avoid scattered string literals

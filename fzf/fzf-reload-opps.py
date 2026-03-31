@@ -43,7 +43,7 @@ def main():
 
     # --team with no quarter defaults to this+next
     if args.team and not args.quarter:
-        args.quarter = "this+next"
+        args.quarter = ["this+next"]
 
     # Load from cache
     if not os.path.exists(OPP_CACHE_FILE):

@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 *.cast
+*.csv
 .claude/
 config.json
 notes_history.json

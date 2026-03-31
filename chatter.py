@@ -9,7 +9,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sfq
 from constants import (
-    CHATTER_BATCH_SIZE, CHATTER_MAX_POSTS, CHATTER_DAYS_WINDOW,
+    CHATTER_BATCH_SIZE, CHATTER_MAX_POSTS, CHATTER_DAYS_WINDOW, CHATTER_INITIAL_POSTS,
     KEYWORD_NINJA, KEYWORD_SOLSTRAT,
     SF_FIELD_BODY, SF_FIELD_CREATED_DATE, SF_FIELD_CREATED_BY, SF_FIELD_PARENT_ID,
 )
@@ -59,6 +59,126 @@ def fetch_chatter_batch(opp_ids):
     for opp_id in opp_ids:
         save_chatter_cache(opp_id, by_opp.get(opp_id, [])[:CHATTER_MAX_POSTS])
     return len(opp_ids)
+
+
+def _get_cache_meta(opp_id):
+    """Return (has_cache, age_days, fetched_at_str, post_count) for an opp's cache file."""
+    cache_file = os.path.join(CHATTER_CACHE_DIR, f"{opp_id}.json")
+    if not os.path.exists(cache_file):
+        return False, None, None, 0
+    try:
+        with open(cache_file, encoding="utf-8") as f:
+            cache = json.load(f)
+        fetched_at_str = cache.get("fetched_at", "")
+        age_days = (datetime.now() - datetime.strptime(fetched_at_str, "%Y-%m-%d %H:%M")).days
+        post_count = len(cache.get("posts", []))
+        return True, age_days, fetched_at_str, post_count
+    except (json.JSONDecodeError, FileNotFoundError, ValueError):
+        return False, None, None, 0
+
+
+def fetch_chatter_initial(opp_ids):
+    """Fetch the last CHATTER_INITIAL_POSTS posts for opps with no local cache."""
+    if not opp_ids:
+        return
+    by_opp = defaultdict(list)
+    for i in range(0, len(opp_ids), CHATTER_BATCH_SIZE):
+        chunk = opp_ids[i:i + CHATTER_BATCH_SIZE]
+        ids_str = ", ".join(f"'{oid}'" for oid in chunk)
+        query = (
+            f"SELECT {SF_FIELD_PARENT_ID}, {SF_FIELD_CREATED_BY}, "
+            f"{SF_FIELD_CREATED_DATE}, {SF_FIELD_BODY}, Type "
+            "FROM OpportunityFeed "
+            f"WHERE {SF_FIELD_PARENT_ID} IN ({ids_str}) "
+            f"ORDER BY {SF_FIELD_PARENT_ID}, {SF_FIELD_CREATED_DATE} DESC"
+        )
+        for post in sfq.sf_query(query):
+            pid = post.get(SF_FIELD_PARENT_ID, "")
+            if pid and len(by_opp[pid]) < CHATTER_INITIAL_POSTS:
+                by_opp[pid].append(post)
+    for opp_id in opp_ids:
+        save_chatter_cache(opp_id, by_opp.get(opp_id, []))
+
+
+def fetch_chatter_incremental(stale_opps):
+    """Fetch new posts since last cache update and merge into existing cache.
+
+    stale_opps is a list of (opp_id, fetched_at_str) tuples.
+    Groups opps by their since-date to batch Salesforce queries.
+    """
+    if not stale_opps:
+        return
+    by_since = defaultdict(list)
+    for opp_id, fetched_at_str in stale_opps:
+        try:
+            since_sf = datetime.strptime(fetched_at_str, "%Y-%m-%d %H:%M").strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            continue
+        by_since[since_sf].append(opp_id)
+
+    for since_sf, opp_ids in by_since.items():
+        new_by_opp = defaultdict(list)
+        for i in range(0, len(opp_ids), CHATTER_BATCH_SIZE):
+            chunk = opp_ids[i:i + CHATTER_BATCH_SIZE]
+            ids_str = ", ".join(f"'{oid}'" for oid in chunk)
+            query = (
+                f"SELECT {SF_FIELD_PARENT_ID}, {SF_FIELD_CREATED_BY}, "
+                f"{SF_FIELD_CREATED_DATE}, {SF_FIELD_BODY}, Type "
+                "FROM OpportunityFeed "
+                f"WHERE {SF_FIELD_PARENT_ID} IN ({ids_str}) "
+                f"AND {SF_FIELD_CREATED_DATE} > {since_sf} "
+                f"ORDER BY {SF_FIELD_PARENT_ID}, {SF_FIELD_CREATED_DATE} DESC"
+            )
+            for post in sfq.sf_query(query):
+                pid = post.get(SF_FIELD_PARENT_ID, "")
+                if pid:
+                    new_by_opp[pid].append(post)
+
+        for opp_id in opp_ids:
+            cache_file = os.path.join(CHATTER_CACHE_DIR, f"{opp_id}.json")
+            try:
+                with open(cache_file, encoding="utf-8") as f:
+                    existing = json.load(f).get("posts", [])
+            except (json.JSONDecodeError, FileNotFoundError):
+                existing = []
+
+            new_posts = new_by_opp.get(opp_id, [])
+            if not new_posts:
+                save_chatter_cache(opp_id, existing)
+                continue
+
+            new_keys = {
+                (p.get(SF_FIELD_CREATED_DATE, ""), p.get(SF_FIELD_CREATED_BY, ""))
+                for p in new_posts
+            }
+            merged = list(new_posts)
+            for p in existing:
+                if (p.get(SF_FIELD_CREATED_DATE, ""), p.get(SF_FIELD_CREATED_BY, "")) not in new_keys:
+                    merged.append(p)
+            merged.sort(key=lambda p: p.get(SF_FIELD_CREATED_DATE, ""), reverse=True)
+            save_chatter_cache(opp_id, merged[:CHATTER_MAX_POSTS])
+
+
+def fetch_chatter_smart(opp_ids):
+    """Smart chatter fetch: routes each opp to the right strategy.
+
+    - No local cache                      → fetch last CHATTER_INITIAL_POSTS posts
+    - Cache older than CHATTER_DAYS_WINDOW → incremental fetch since last update
+    - Fresh cache                         → skip
+
+    Returns (initial_count, incremental_count).
+    """
+    no_cache = []
+    stale = []
+    for opp_id in opp_ids:
+        has_cache, age_days, fetched_at_str, post_count = _get_cache_meta(opp_id)
+        if not has_cache or post_count == 0:
+            no_cache.append(opp_id)
+        elif age_days is not None and age_days > CHATTER_DAYS_WINDOW:
+            stale.append((opp_id, fetched_at_str))
+    fetch_chatter_initial(no_cache)
+    fetch_chatter_incremental(stale)
+    return len(no_cache), len(stale)
 
 
 def fetch_chatter(opp_id):

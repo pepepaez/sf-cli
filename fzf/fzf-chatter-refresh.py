@@ -5,7 +5,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from shared import BOLD, DIM, GREEN, RESET, fetch_chatter_batch
+from shared import BOLD, DIM, GREEN, RESET, fetch_chatter_smart
 
 
 def main():
@@ -20,9 +20,18 @@ def main():
         input(f"  {DIM}Press Enter to continue...{RESET}")
         return
 
-    print(f"\n  {BOLD}Refreshing chatter for {len(opp_ids)} opportunities...{RESET}\n")
-    count = fetch_chatter_batch(opp_ids)
-    print(f"\n  {GREEN}Done — {count} chatter caches updated.{RESET}")
+    print(f"\n  {BOLD}Checking chatter for {len(opp_ids)} opportunities...{RESET}\n")
+    initial, incremental = fetch_chatter_smart(opp_ids)
+    total = initial + incremental
+    if total == 0:
+        print(f"  {GREEN}All chatter caches are up to date.{RESET}")
+    else:
+        parts = []
+        if initial:
+            parts.append(f"{initial} initial")
+        if incremental:
+            parts.append(f"{incremental} incremental")
+        print(f"\n  {GREEN}Done — {', '.join(parts)} ({total} total) caches updated.{RESET}")
     input(f"\n  {DIM}Press Enter to continue...{RESET}")
 
 
