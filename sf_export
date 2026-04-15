@@ -1,0 +1,344 @@
+#!/usr/bin/env python3
+"""Inject team opportunities into the capacity Excel template."""
+
+import argparse
+import io
+import json
+import os
+import re
+import sys
+import zipfile
+from datetime import datetime
+from xml.sax.saxutils import escape as xml_escape
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sfq
+from chatter import CHATTER_CACHE_DIR
+from formatting import strip_html, days_since
+from shared import (
+    OPP_CACHE_FILE, CACHE_DIR, DEFAULT_MANAGER_ID, DEAL_TYPES,
+    GREEN, RESET, DIM, BOLD, YELLOW,
+    enrich, inject_notes, load_latest_notes,
+    load_views, apply_filters,
+)
+
+OPP_FIELDS = (
+    "Account.Name, Name, Id, convertCurrency(Amount), CurrencyIsoCode, "
+    "Territory__c, Owner.Name, CloseDate, StageName, Type, IsClosed, "
+    "Solution_Strategist1__r.Name, Solution_Strategist1__r.ManagerId, "
+    "Solution_Strategist1__r.Id, Supporting_Solution_Strategist__r.Name, "
+    "Managerial_Forecast_Category__c, Competitor__c, Compelling_Event__c, "
+    "NextStep, CreatedDate, LastStageChangeDate, Description"
+)
+
+SCRIPT_DIR    = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_DIR  = os.path.join(SCRIPT_DIR, "team_capacity")
+TEMPLATE      = os.path.join(TEMPLATE_DIR, "SolStrat_Capacity_template_v5.xlsx")
+DEALS_XML     = "xl/worksheets/sheet2.xml"
+CHATTER_XML   = "xl/worksheets/sheet4.xml"
+COL_LETTERS   = list("ABCDEFGHIJKLMN")  # 14 columns
+CHATTER_COLS  = list("ABCDEFG")        # 7 columns
+
+
+def _load_chatter_posts(opp_id):
+    """Load all cached chatter posts for an opportunity."""
+    cache_file = os.path.join(CHATTER_CACHE_DIR, f"{opp_id}.json")
+    if not os.path.exists(cache_file):
+        return []
+    try:
+        with open(cache_file, encoding="utf-8") as f:
+            return json.load(f).get("posts", [])
+    except (json.JSONDecodeError, FileNotFoundError):
+        return []
+
+
+def _classify_post(body):
+    upper = body.upper()
+    if "NINJA UPDATE" in upper:
+        return "Ninja Update"
+    if "SOLSTRAT 360" in upper:
+        return "SolStrat 360"
+    return "General"
+
+
+def build_chatter_rows(records):
+    rows = []
+    for r in records:
+        opp_id   = r.get("Id", "")
+        account  = r.get("Account.Name", "")
+        opp_name = r.get("Name", "")
+        for p in _load_chatter_posts(opp_id):
+            body = strip_html(p.get("Body", "") or "")
+            if not body.strip():
+                continue
+            date = (p.get("CreatedDate", "") or "")[:10]
+            rows.append([
+                opp_id, account, opp_name,
+                p.get("CreatedBy.Name", ""),
+                date,
+                _classify_post(body),
+                body,
+            ])
+    return rows
+
+
+def build_chatter_sheet_xml(chatter_rows):
+    header = ["Opportunity ID", "Account Name", "Opportunity", "Author", "Date", "Type", "Chatter Post"]
+    all_rows = [header] + chatter_rows
+    data_rows_xml = []
+    for i, row_values in enumerate(all_rows, start=1):
+        cells = "".join(
+            cell_xml(CHATTER_COLS[col], i, val)
+            for col, val in enumerate(row_values)
+        )
+        data_rows_xml.append(f'<row r="{i}">{cells}</row>')
+    last_row = len(all_rows)
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        f'<dimension ref="A1:G{last_row}"/>'
+        "<sheetData>"
+        + "".join(data_rows_xml)
+        + "</sheetData>"
+        "</worksheet>"
+    ).encode("utf-8")
+
+
+def refresh_cache():
+    year = datetime.now().year
+    query = (
+        f"SELECT {OPP_FIELDS} FROM Opportunity "
+        f"WHERE CloseDate >= {year - 1}-01-01 AND CloseDate <= {year + 1}-12-31 "
+        "ORDER BY Account.Name, CloseDate ASC"
+    )
+    print(f"\n  {BOLD}{YELLOW}Fetching from Salesforce...{RESET}\n")
+    records = sfq.sf_query(query)
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    fetched_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    with open(OPP_CACHE_FILE, "w") as f:
+        json.dump({"fetched_at": fetched_at, "records": records}, f)
+    print(f"  {GREEN}Cache updated — {len(records)} records{RESET}\n")
+    return fetched_at
+
+
+def build_row(r):
+    activity = r.get("_note_activity", "")
+    return [
+        r.get("Solution_Strategist1__r.Name", ""),
+        r.get("Account.Name", ""),
+        r.get("Name", ""),
+        r.get("_type_short", ""),
+        int(r.get("_acv", 0) or 0),
+        r.get("StageName", ""),
+        r.get("_type_short", ""),
+        r.get("_quarter", ""),
+        r.get("CloseDate", ""),
+        r.get("Owner.Name", ""),
+        r.get("_note_status", ""),
+        "" if activity == "<empty>" else activity,
+        days_since(r.get("CreatedDate", "")),
+        days_since(r.get("LastStageChangeDate", "")),
+    ]
+
+
+_INVALID_XML_RE = re.compile(
+    r"[^\x09\x0A\x0D\x20-\uD7FF\uE000-\uFFFD\U00010000-\U0010FFFF]"
+)
+
+
+def _sanitize_xml(s):
+    """Strip characters that are invalid in XML 1.0."""
+    return _INVALID_XML_RE.sub("", s)
+
+
+def cell_xml(col_letter, row_num, value):
+    ref = f"{col_letter}{row_num}"
+    if isinstance(value, int):
+        return f'<c r="{ref}"><v>{value}</v></c>'
+    s = xml_escape(_sanitize_xml(str(value))) if value else ""
+    if not s:
+        return ""
+    return f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{s}</t></is></c>'
+
+
+def build_sheet_xml(template_xml_bytes, rows):
+    """Replace sheetData content in the Deals sheet XML, preserving everything else."""
+    xml = template_xml_bytes.decode("utf-8")
+
+    # Update dimension and autoFilter refs to cover new columns M and N
+    last_row = len(rows) + 1  # +1 for header
+    xml = re.sub(r'ref="A1:[A-Z]+\d+"', f'ref="A1:N{last_row}"', xml)
+
+    # Extract the header row and append two new column headers (M, N)
+    header_match = re.search(r'(<row r="1"[^/]*/?>)(.*?)(</row>)', xml, re.DOTALL)
+    if header_match:
+        header_row_xml = (
+            header_match.group(1)
+            + header_match.group(2)
+            + cell_xml("M", 1, "Opp Age (days)")
+            + cell_xml("N", 1, "Stage Age (days)")
+            + header_match.group(3)
+        )
+    else:
+        header_row_xml = ""
+
+    # Build data rows
+    data_rows_xml = []
+    for i, row_values in enumerate(rows, start=2):
+        cells = "".join(
+            cell_xml(COL_LETTERS[col], i, val)
+            for col, val in enumerate(row_values)
+        )
+        data_rows_xml.append(
+            f'<row r="{i}" spans="1:14" x14ac:dyDescent="0.2">{cells}</row>'
+        )
+
+    new_sheet_data = (
+        "<sheetData>"
+        + header_row_xml
+        + "".join(data_rows_xml)
+        + "</sheetData>"
+    )
+
+    xml = re.sub(r"<sheetData>.*?</sheetData>", new_sheet_data, xml, flags=re.DOTALL)
+    return xml.encode("utf-8")
+
+
+def _patch_workbook_xml(xml_bytes):
+    """Add Chatter sheet entry, extend FilterDatabase to col N, and fullCalcOnLoad."""
+    xml = xml_bytes.decode("utf-8")
+    xml = re.sub(r"(<calcPr\b[^>]*?)/>", r'\1 fullCalcOnLoad="1"/>', xml)
+    xml = xml.replace(
+        "</sheets>",
+        '<sheet name="Chatter" sheetId="4" r:id="rId9"/></sheets>',
+    )
+    xml = xml.replace("Deals!$A$1:$L$", "Deals!$A$1:$N$")
+    return xml.encode("utf-8")
+
+
+def _patch_workbook_rels(xml_bytes):
+    """Register sheet4.xml relationship in workbook.xml.rels."""
+    xml = xml_bytes.decode("utf-8")
+    insertion = (
+        '<Relationship Id="rId9"'
+        ' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"'
+        ' Target="worksheets/sheet4.xml"/>'
+    )
+    xml = xml.replace("</Relationships>", insertion + "</Relationships>")
+    return xml.encode("utf-8")
+
+
+def _patch_content_types(xml_bytes):
+    """Register sheet4.xml in [Content_Types].xml."""
+    xml = xml_bytes.decode("utf-8")
+    insertion = (
+        '<Override PartName="/xl/worksheets/sheet4.xml"'
+        ' ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+    )
+    xml = xml.replace("</Types>", insertion + "</Types>")
+    return xml.encode("utf-8")
+
+
+def write_xlsx(template_path, out_path, rows, chatter_rows):
+    """Copy template zip, replacing the Deals sheet and adding a Chatter sheet."""
+    with zipfile.ZipFile(template_path, "r") as zin:
+        template_sheet_xml = zin.read(DEALS_XML)
+        new_sheet_xml      = build_sheet_xml(template_sheet_xml, rows)
+        new_chatter_xml    = build_chatter_sheet_xml(chatter_rows)
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                data = zin.read(item.filename)
+                if item.filename == DEALS_XML:
+                    data = new_sheet_xml
+                elif item.filename == "xl/workbook.xml":
+                    data = _patch_workbook_xml(data)
+                elif item.filename == "xl/_rels/workbook.xml.rels":
+                    data = _patch_workbook_rels(data)
+                elif item.filename == "[Content_Types].xml":
+                    data = _patch_content_types(data)
+                zout.writestr(item, data)
+            # Append the new Chatter sheet
+            zout.writestr(CHATTER_XML, new_chatter_xml)
+
+    with open(out_path, "wb") as f:
+        f.write(buf.getvalue())
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Inject team opps into the capacity Excel template.")
+    parser.add_argument("--refresh", action="store_true",
+                        help="Re-fetch opportunity data from Salesforce before exporting")
+    args = parser.parse_args()
+
+    if not os.path.exists(TEMPLATE):
+        print(f"  Template not found: {TEMPLATE}")
+        sys.exit(1)
+
+    if args.refresh:
+        refresh_cache()
+    elif not os.path.exists(OPP_CACHE_FILE):
+        print("  No cache found. Run: sf_export --refresh")
+        sys.exit(1)
+
+    with open(OPP_CACHE_FILE) as f:
+        cache_data = json.load(f)
+    fetched_at = cache_data.get("fetched_at", "unknown")
+    all_records = cache_data["records"]
+
+    views = load_views()
+    view = views.get("portfolio", {})
+    territory = view.get("territory")
+    filter_args = argparse.Namespace(
+        account=None, ae=None, ninja=None, type=None, all_stages=False,
+        team=DEFAULT_MANAGER_ID if view.get("team") else None,
+        quarter=view.get("quarter"),
+        stage=([view["stage"]] if isinstance(view.get("stage"), str) else view.get("stage")),
+        territory=([territory] if isinstance(territory, str) else territory),
+    )
+    records = apply_filters(all_records, filter_args)
+
+    # OR-in any extra ninjas listed in the view (e.g. former team members),
+    # applying the same stage/quarter filters but without the team constraint.
+    include_ninjas = view.get("include_ninjas", [])
+    if include_ninjas:
+        seen_ids = {r["Id"] for r in records}
+        no_team_vars = {**vars(filter_args), "team": None}
+        filter_args_no_team = argparse.Namespace(**no_team_vars)
+        pool = apply_filters(all_records, filter_args_no_team)
+        for name in include_ninjas:
+            q = name.lower()
+            for r in pool:
+                if r["Id"] not in seen_ids and q in (r.get("Solution_Strategist1__r.Name", "") or "").lower():
+                    records.append(r)
+                    seen_ids.add(r["Id"])
+
+    if DEAL_TYPES:
+        records = [r for r in records if r.get("Type", "") in DEAL_TYPES]
+
+    records = enrich(records)
+    inject_notes(records, load_latest_notes())
+    records.sort(key=lambda r: (
+        r.get("Solution_Strategist1__r.Name", ""),
+        r.get("CloseDate", ""),
+    ))
+
+    rows         = [build_row(r) for r in records]
+    chatter_rows = build_chatter_rows(records)
+    stamp    = datetime.now().strftime("%Y%m%d_%H%M")
+    out_name = f"SolStrat_Capacity_Status_{stamp}.xlsx"
+    out_path = os.path.join(TEMPLATE_DIR, out_name)
+
+    write_xlsx(TEMPLATE, out_path, rows, chatter_rows)
+
+    print(f"  {GREEN}Exported {len(rows)} opportunities → {out_name}{RESET}")
+    if chatter_rows:
+        print(f"  {DIM}Cache from {fetched_at} · {len(chatter_rows)} chatter posts{RESET}")
+    else:
+        print(f"  {DIM}Cache from {fetched_at} · no chatter cached — open salesfx and ctrl-r to populate{RESET}")
+
+
+if __name__ == "__main__":
+    main()

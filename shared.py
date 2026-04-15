@@ -102,14 +102,16 @@ def enrich_detail(record):
 def enrich(records):
     """Add all derived fields needed for filtering, aggregation, and display."""
     for r in records:
-        r["_type"]       = remap_type(r.get("Type", "") or "(blank)")
-        r["_type_short"] = TYPE_SHORT.get(r["_type"], r["_type"])
-        r["_quarter"]    = quarter_from_date(r.get("CloseDate", ""))
-        r["_stage"]      = r.get("StageName", "") or "(blank)"
-        r["_ss"]         = r.get("Solution_Strategist1__r.Name", "") or "(unassigned)"
-        r["_acv"]        = to_float(r.get("Amount", 0))
-        r["Amount"]      = fmt_eur(r["_acv"])
-        r["Type"]        = r["_type"]
+        r["_type"]          = remap_type(r.get("Type", "") or "(blank)")
+        r["_type_short"]    = TYPE_SHORT.get(r["_type"], r["_type"])
+        r["_quarter"]       = quarter_from_date(r.get("CloseDate", ""))
+        r["_stage"]         = r.get("StageName", "") or "(blank)"
+        r["_ss"]            = r.get("Solution_Strategist1__r.Name", "") or "(unassigned)"
+        r["_acv"]           = to_float(r.get("Amount", 0))
+        r["Amount"]         = fmt_eur(r["_acv"])
+        r["Type"]           = r["_type"]
+        r["_opp_age_days"]  = days_since(r.get("CreatedDate", ""))
+        r["_stage_days"]    = days_since(r.get("LastStageChangeDate", ""))
     return records
 
 
@@ -123,9 +125,11 @@ def enrich_for_display(records, note_lookup=None):
     if note_lookup is None:
         note_lookup = {}
     for r in records:
-        r.setdefault("_acv",        to_float(r.get("Amount", "")))
-        r.setdefault("_quarter",    quarter_from_date(r.get("CloseDate", "")))
-        r.setdefault("_type_short", r.get("Type", ""))
+        r.setdefault("_acv",           to_float(r.get("Amount", "")))
+        r.setdefault("_quarter",       quarter_from_date(r.get("CloseDate", "")))
+        r.setdefault("_type_short",    r.get("Type", ""))
+        r.setdefault("_opp_age_days",  days_since(r.get("CreatedDate", "")))
+        r.setdefault("_stage_days",    days_since(r.get("LastStageChangeDate", "")))
         note = note_lookup.get(r.get("Id", ""), {})
         r["_note_status"]   = note.get("status", "")
         r["_note_activity"] = note.get("activity", "")
@@ -264,7 +268,8 @@ def opp_list_view(opps, context="", filters=None):
 
     while True:
         # Write record data to temp file so fzf helper scripts can read it
-        _preview_fields = {"_quarter", "_type_short", "_note_status", "_note_activity"}
+        _preview_fields = {"_quarter", "_type_short", "_note_status", "_note_activity",
+                           "_opp_age_days", "_stage_days"}
         preview_data = [
             {k: v for k, v in r.items() if not k.startswith("_") or k in _preview_fields}
             for r in opps
@@ -335,17 +340,17 @@ def opp_list_view(opps, context="", filters=None):
 
             sort_picker = (
                 f"execute(printf 'Account\\nOpportunity\\nACV\\nStage\\nType"
-                f"\\nClose Date\\nOwner\\nSS'"
-                f" | fzf --prompt 'Sort by > ' --height 12 --reverse"
+                f"\\nClose Date\\nOwner\\nSS\\nOpp Age\\nStage Age'"
+                f" | fzf --prompt 'Sort by > ' --height 14 --reverse"
                 f" > {sort_choice_file})"
             )
             sort_reload = f"reload(python3 {sort_script} {tmp.name} {sort_choice_file})"
 
             cols_picker = (
                 f"execute(printf 'Account\\nOpportunity\\nACV\\nStage\\nType"
-                f"\\nClose Date\\nOwner\\nSS\\nStatus\\nActivity'"
+                f"\\nClose Date\\nOwner\\nSS\\nStatus\\nActivity\\nOpp Age\\nStage Age'"
                 f" | fzf --prompt 'Columns (tab to toggle) > '"
-                f" --height 12 --reverse --multi > {cols_choice_file})"
+                f" --height 14 --reverse --multi > {cols_choice_file})"
             )
             cols_reload = f"reload(python3 {cols_script} {tmp.name} {cols_choice_file})"
 

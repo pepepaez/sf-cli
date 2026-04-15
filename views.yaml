@@ -78,3 +78,13 @@ portfolio:
   team: true
   quarter: [2026, 2027]
   stage: open
+  include_ninjas: [sean]
+
+joel_opps:
+  ae: joel
+  quarter: [2026]
+
+eu_unassigned:
+  ninja: none
+  quarter: [2026]
+  territory: [EU]

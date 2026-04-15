@@ -55,6 +55,8 @@ ALL_COLS = [
     ("Solution_Strategist1__r.Name",    "SS"),
     ("_note_status",                    "Status"),
     ("_note_activity",                  "Activity"),
+    ("_opp_age_days",                   "Opp Age"),
+    ("_stage_days",                     "Stage Age"),
 ]
 
 LIST_FIELD_MAP = dict(ALL_COLS)
