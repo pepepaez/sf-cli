@@ -162,6 +162,37 @@ def pick_org(orgs, existing_org):
 
 
 # ---------------------------------------------------------------------------
+# PATH setup
+# ---------------------------------------------------------------------------
+
+def setup_path():
+    """Add the repo directory to PATH in the user's shell rc file if not already there."""
+    shell = os.environ.get("SHELL", "")
+    if "zsh" in shell:
+        rc_file = os.path.expanduser("~/.zshrc")
+    elif "bash" in shell:
+        rc_file = os.path.expanduser("~/.bashrc")
+    else:
+        print(f"  ⚠ Unknown shell ({shell}) — add this to your shell rc manually:")
+        print(f'    export PATH="{SCRIPT_DIR}:$PATH"')
+        return
+
+    export_line = f'export PATH="{SCRIPT_DIR}:$PATH"'
+
+    # Check if already present (by directory path)
+    if os.path.exists(rc_file):
+        with open(rc_file, encoding="utf-8") as f:
+            if SCRIPT_DIR in f.read():
+                print(f"  ✓ PATH already configured in {rc_file}")
+                return
+
+    with open(rc_file, "a", encoding="utf-8") as f:
+        f.write(f"\n# sf-cli\n{export_line}\n")
+
+    print(f"  Added to {rc_file} — run: source {rc_file}")
+
+
+# ---------------------------------------------------------------------------
 # Views setup
 # ---------------------------------------------------------------------------
 
@@ -288,6 +319,9 @@ def main():
 
     # Step 6: Create views.yaml if this is a fresh install
     create_views_if_missing()
+
+    # Step 7: Add repo to PATH
+    setup_path()
 
     print(f"\n  You're all set! Run: salesfx --team\n")
 
