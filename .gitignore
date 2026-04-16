@@ -10,5 +10,4 @@ notes_history.json
 session_notes*.csv
 cache/
 docs/
-team_capacity/*.xlsx
-!team_capacity/SolStrat_Capacity_template_v5.xlsx
+team_capacity/
