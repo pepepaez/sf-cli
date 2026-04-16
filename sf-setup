@@ -22,17 +22,41 @@ def sf_query(soql, org=None):
     return records
 
 
-def get_default_org():
-    """Get the default sf CLI org."""
+def list_authed_orgs():
+    """Return list of authenticated org usernames from sf org list."""
     result = subprocess.run(
-        ["sf", "config", "get", "target-org", "--json"],
+        ["sf", "org", "list", "--json"],
         capture_output=True, text=True)
-    if result.returncode == 0:
+    if result.returncode != 0:
+        return []
+    try:
         data = json.loads(result.stdout)
-        for item in data.get("result", []):
-            if item.get("name") == "target-org":
-                return item.get("value")
-    return None
+        orgs = data.get("result", {})
+        all_orgs = orgs.get("nonScratchOrgs", []) + orgs.get("scratchOrgs", [])
+        return [o.get("username") for o in all_orgs if o.get("username")]
+    except (json.JSONDecodeError, AttributeError):
+        return []
+
+
+def pick_org(orgs, existing_org):
+    """Let user pick from authenticated orgs, defaulting to the existing one."""
+    if not orgs:
+        return None
+    if len(orgs) == 1:
+        return orgs[0]
+    default = existing_org if existing_org in orgs else orgs[0]
+    print(f"\n  Authenticated orgs:")
+    for i, org in enumerate(orgs):
+        marker = " (current)" if org == default else ""
+        print(f"    {i + 1}. {org}{marker}")
+    choice = input(f"\n  Select org [1-{len(orgs)}] (Enter for {default}): ").strip()
+    if not choice:
+        return default
+    try:
+        return orgs[int(choice) - 1]
+    except (ValueError, IndexError):
+        print("  Invalid selection, using default.")
+        return default
 
 
 def check_dependencies():
@@ -88,23 +112,30 @@ def main():
         with open(CONFIG_PATH) as f:
             existing = json.load(f)
 
-    default_org = existing.get("org") or get_default_org() or ""
+    existing_org = existing.get("org", "")
+    authed_orgs = list_authed_orgs()
 
-    if default_org:
-        login = input(f"  Already authenticated as {default_org}. Re-login? [y/N]: ").strip().lower()
+    if authed_orgs:
+        print(f"  Found {len(authed_orgs)} authenticated org(s).")
+        login = input("  Log in to a different org? [y/N]: ").strip().lower()
         if login in ("y", "yes"):
             sf_login()
-            default_org = get_default_org() or default_org
+            authed_orgs = list_authed_orgs()
     else:
-        print("  You need to authenticate with Salesforce first.")
+        print("  No authenticated orgs found. Opening Salesforce login...")
         sf_login()
-        default_org = get_default_org() or ""
+        authed_orgs = list_authed_orgs()
 
-    # Step 2: Confirm org
-    org = input(f"  Salesforce org [{default_org}]: ").strip() or default_org
-    if not org:
-        print("  No org specified. Run: sf org login web")
+    if not authed_orgs:
+        print("  Login succeeded but no orgs detected. Run: sf org list")
         sys.exit(1)
+
+    # Step 2: Pick org
+    org = pick_org(authed_orgs, existing_org)
+    if not org:
+        print("  No org selected.")
+        sys.exit(1)
+    print(f"  Using org: {org}")
 
     # Step 3: Find the user
     print(f"\n  Searching for your user in {org}...")
