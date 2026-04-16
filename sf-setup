@@ -1,16 +1,112 @@
 #!/usr/bin/env python3
-"""Initial setup for sf-cli: find your user, resolve manager ID, write config."""
+"""Initial setup for sf-cli: install dependencies, authenticate, write config and views."""
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.json")
+VIEWS_PATH  = os.path.join(SCRIPT_DIR, "views.yaml")
+VIEWS_EXAMPLE_PATH = os.path.join(SCRIPT_DIR, "views.yaml.example")
 
+
+# ---------------------------------------------------------------------------
+# Dependency helpers
+# ---------------------------------------------------------------------------
+
+def _brew_available():
+    return subprocess.run(["which", "brew"], capture_output=True).returncode == 0
+
+
+def _ensure_brew_package(brew_package, bin_name=None, optional=False):
+    """Check if a CLI tool is installed; offer to install via Homebrew if not.
+
+    Returns True if the tool is available after this call, False otherwise.
+    """
+    cmd = bin_name or brew_package
+    if subprocess.run(["which", cmd], capture_output=True).returncode == 0:
+        print(f"  ✓ {cmd}")
+        return True
+
+    label = f"{cmd} (optional)" if optional else cmd
+    if not _brew_available():
+        print(f"  ✗ {label} — Homebrew not found, install manually or get Homebrew from https://brew.sh")
+        return False
+
+    prompt = f"  {label} not found. Install with Homebrew? "
+    prompt += "[y/N]: " if optional else "[Y/n]: "
+    answer = input(prompt).strip().lower()
+    default_yes = not optional
+    if (default_yes and answer not in ("n", "no")) or (not default_yes and answer in ("y", "yes")):
+        print(f"  Installing {brew_package}...", flush=True)
+        result = subprocess.run(["brew", "install", brew_package])
+        if result.returncode == 0:
+            print(f"  ✓ {cmd} installed")
+            return True
+        print(f"  ✗ Failed to install {brew_package}. Try manually: brew install {brew_package}")
+        return False
+    return False
+
+
+def _ensure_pyyaml():
+    """Check if pyyaml is importable; offer to install via pip if not."""
+    try:
+        import yaml  # noqa: F401
+        print("  ✓ pyyaml")
+        return True
+    except ImportError:
+        pass
+
+    answer = input("  pyyaml not found. Install with pip? [Y/n]: ").strip().lower()
+    if answer in ("n", "no"):
+        print("  pyyaml is required. Install manually: pip3 install --user pyyaml")
+        return False
+
+    print("  Installing pyyaml...", flush=True)
+    # Try --user first (avoids PEP 668 restriction on managed Pythons)
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--user", "pyyaml"],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        print("  ✓ pyyaml installed")
+        return True
+    # Fall back to --break-system-packages (Homebrew Python)
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--break-system-packages", "pyyaml"],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        print("  ✓ pyyaml installed")
+        return True
+    print("  ✗ Failed to install pyyaml. Try: pip3 install --user pyyaml")
+    return False
+
+
+def check_and_install_dependencies():
+    """Check all dependencies; install missing ones interactively. Exits on failure."""
+    print("  Checking dependencies...\n")
+    sf_ok   = _ensure_brew_package("salesforce-cli", bin_name="sf")
+    fzf_ok  = _ensure_brew_package("fzf")
+    yaml_ok = _ensure_pyyaml()
+    # VisiData is optional — enables the --vd flag
+    _ensure_brew_package("visidata", bin_name="vd", optional=True)
+
+    print()
+    if not all([sf_ok, fzf_ok, yaml_ok]):
+        print("  Required dependencies are missing. Fix the above and re-run setup.")
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Salesforce org helpers
+# ---------------------------------------------------------------------------
 
 def sf_query(soql, org=None):
-    """Run a SOQL query via sf CLI."""
+    """Run a SOQL query via sf CLI and return list of record dicts."""
     cmd = ["sf", "data", "query", "--query", soql, "--json"]
     if org:
         cmd += ["--target-org", org]
@@ -24,9 +120,7 @@ def sf_query(soql, org=None):
 
 def list_authed_orgs():
     """Return list of authenticated org usernames from sf org list."""
-    result = subprocess.run(
-        ["sf", "org", "list", "--json"],
-        capture_output=True, text=True)
+    result = subprocess.run(["sf", "org", "list", "--json"], capture_output=True, text=True)
     if result.returncode != 0:
         return []
     try:
@@ -36,57 +130,6 @@ def list_authed_orgs():
         return [o.get("username") for o in all_orgs if o.get("username")]
     except (json.JSONDecodeError, AttributeError):
         return []
-
-
-def pick_org(orgs, existing_org):
-    """Let user pick from authenticated orgs, defaulting to the existing one."""
-    if not orgs:
-        return None
-    if len(orgs) == 1:
-        return orgs[0]
-    default = existing_org if existing_org in orgs else orgs[0]
-    print(f"\n  Authenticated orgs:")
-    for i, org in enumerate(orgs):
-        marker = " (current)" if org == default else ""
-        print(f"    {i + 1}. {org}{marker}")
-    choice = input(f"\n  Select org [1-{len(orgs)}] (Enter for {default}): ").strip()
-    if not choice:
-        return default
-    try:
-        return orgs[int(choice) - 1]
-    except (ValueError, IndexError):
-        print("  Invalid selection, using default.")
-        return default
-
-
-def check_dependencies():
-    """Check that required tools and packages are installed."""
-    ok = True
-
-    result = subprocess.run(["which", "sf"], capture_output=True, text=True)
-    if result.returncode != 0:
-        print("  ✗ sf CLI not found. Install it: https://developer.salesforce.com/tools/salesforcecli")
-        ok = False
-    else:
-        print("  ✓ sf CLI found")
-
-    result = subprocess.run(["which", "fzf"], capture_output=True, text=True)
-    if result.returncode != 0:
-        print("  ✗ fzf not found. Install it: brew install fzf")
-        ok = False
-    else:
-        print("  ✓ fzf found")
-
-    try:
-        import yaml  # noqa: F401
-        print("  ✓ pyyaml found")
-    except ImportError:
-        print("  ✗ pyyaml not found. Install it: pip install pyyaml")
-        ok = False
-
-    if not ok:
-        print("\n  Please install the missing dependencies and re-run setup.")
-        sys.exit(1)
 
 
 def sf_login():
@@ -99,14 +142,51 @@ def sf_login():
     print()
 
 
+def pick_org(orgs, existing_org):
+    """Let user pick from authenticated orgs, defaulting to the existing one."""
+    if len(orgs) == 1:
+        return orgs[0]
+    default = existing_org if existing_org in orgs else orgs[0]
+    print("  Authenticated orgs:")
+    for i, org in enumerate(orgs):
+        marker = "  ← current" if org == default else ""
+        print(f"    {i + 1}. {org}{marker}")
+    choice = input(f"\n  Select org [1-{len(orgs)}] (Enter for {default}): ").strip()
+    if not choice:
+        return default
+    try:
+        return orgs[int(choice) - 1]
+    except (ValueError, IndexError):
+        print("  Invalid selection, using default.")
+        return default
+
+
+# ---------------------------------------------------------------------------
+# Views setup
+# ---------------------------------------------------------------------------
+
+def create_views_if_missing():
+    """Copy views.yaml.example → views.yaml if no views file exists yet."""
+    if os.path.exists(VIEWS_PATH):
+        return
+    if not os.path.exists(VIEWS_EXAMPLE_PATH):
+        print("  ⚠ views.yaml.example not found — skipping views setup")
+        return
+    shutil.copy(VIEWS_EXAMPLE_PATH, VIEWS_PATH)
+    print(f"  Created views.yaml from template — edit it to customise your saved views")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
     print("\n  sf-cli setup\n")
 
-    # Step 0: Check all dependencies
-    check_dependencies()
-    print()
+    # Step 1: Dependencies
+    check_and_install_dependencies()
 
-    # Step 1: Authenticate with Salesforce
+    # Step 2: Salesforce authentication
     existing = {}
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH) as f:
@@ -117,8 +197,7 @@ def main():
 
     if authed_orgs:
         print(f"  Found {len(authed_orgs)} authenticated org(s).")
-        login = input("  Log in to a different org? [y/N]: ").strip().lower()
-        if login in ("y", "yes"):
+        if input("  Log in to a different org? [y/N]: ").strip().lower() in ("y", "yes"):
             sf_login()
             authed_orgs = list_authed_orgs()
     else:
@@ -130,14 +209,11 @@ def main():
         print("  Login succeeded but no orgs detected. Run: sf org list")
         sys.exit(1)
 
-    # Step 2: Pick org
+    print()
     org = pick_org(authed_orgs, existing_org)
-    if not org:
-        print("  No org selected.")
-        sys.exit(1)
-    print(f"  Using org: {org}")
+    print(f"\n  Using org: {org}")
 
-    # Step 3: Find the user
+    # Step 3: Find the user in Salesforce
     print(f"\n  Searching for your user in {org}...")
     name_search = input("  Your name (or part of it): ").strip()
     if not name_search:
@@ -147,25 +223,23 @@ def main():
     records = sf_query(
         f"SELECT Id, Name, ManagerId, Manager.Name, Email "
         f"FROM User WHERE Name LIKE '%{name_search}%' AND IsActive = true",
-        org=org)
-
+        org=org,
+    )
     if not records:
         print("  No users found.")
         sys.exit(1)
 
-    # Filter out attributes
-    users = []
-    for r in records:
-        user = {
-            "Id": r.get("Id"),
-            "Name": r.get("Name"),
-            "Email": r.get("Email"),
-            "ManagerId": r.get("ManagerId"),
+    users = [
+        {
+            "Id":          r.get("Id"),
+            "Name":        r.get("Name"),
+            "Email":       r.get("Email"),
+            "ManagerId":   r.get("ManagerId"),
             "ManagerName": (r.get("Manager") or {}).get("Name", ""),
         }
-        users.append(user)
+        for r in records
+    ]
 
-    # If multiple matches, let user pick
     if len(users) > 1:
         print(f"\n  Found {len(users)} users:\n")
         for i, u in enumerate(users):
@@ -179,32 +253,27 @@ def main():
     else:
         user = users[0]
 
-    print(f"\n  User: {user['Name']} ({user['Email']})")
+    print(f"\n  User:    {user['Name']} ({user['Email']})")
     print(f"  Manager: {user['ManagerName']}")
-    print(f"  Manager ID: {user['ManagerId']}")
 
-    # Step 3: Ask if they are a manager (use own ID) or IC (use manager's ID)
-    print(f"\n  If you manage a team, your own ID will be used to scope pipeline")
-    print(f"  queries. Otherwise, your manager's ID is used.\n")
-    is_manager = input("  Are you a manager with direct reports? [y/N]: ").strip().lower()
-
-    if is_manager in ("y", "yes"):
+    # Step 4: Determine manager_id scoping
+    print(f"\n  Pipeline queries are scoped by a manager ID.")
+    print(f"  Use your own ID if you manage the team; your manager's ID if you're an IC.\n")
+    if input("  Are you a manager with direct reports? [y/N]: ").strip().lower() in ("y", "yes"):
         manager_id = user["Id"]
         print(f"\n  Using your ID: {manager_id}")
     else:
         manager_id = user["ManagerId"]
         print(f"\n  Using your manager's ID: {manager_id}")
 
-    # Step 4: Write config — preserve any existing custom keys, update identity fields
+    # Step 5: Write config
     config = existing.copy()
     config.update({
-        "org": org,
+        "org":        org,
         "manager_id": manager_id,
-        "user_id": user["Id"],
-        "user_name": user["Name"],
+        "user_id":    user["Id"],
+        "user_name":  user["Name"],
     })
-
-    # Set defaults for keys that must be present (never overwrite if already set)
     config.setdefault("deal_types", ["New Business", "Up-sell and Retention"])
     config.setdefault("note_statuses", ["Active", "Inactive"])
     config.setdefault("note_activities", [
@@ -215,9 +284,12 @@ def main():
 
     with open(CONFIG_PATH, "w") as f:
         json.dump(config, f, indent=2)
+    print(f"\n  Config saved → config.json")
 
-    print(f"\n  Config saved to {CONFIG_PATH}")
-    print(f"  You're all set!\n")
+    # Step 6: Create views.yaml if this is a fresh install
+    create_views_if_missing()
+
+    print(f"\n  You're all set! Run: salesfx --team\n")
 
 
 if __name__ == "__main__":

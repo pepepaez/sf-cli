@@ -4,6 +4,7 @@ __pycache__/
 *.csv
 .claude/
 config.json
+views.yaml
 notes_history.json
 session_notes*.csv
 cache/

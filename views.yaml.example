@@ -1,0 +1,45 @@
+# Saved views for salesfx
+# Copy this file to views.yaml and customise it for your team.
+# Usage: salesfx -v <name>
+# CLI flags always override view settings.
+#
+# Available filters:
+#   team: true                                    # your team (scoped by manager_id in config)
+#   quarter: this+next                            # this, next, this+next, Q32026, 2026, etc.
+#   account: Acme                                 # fuzzy match on account name
+#   ae: Todd                                      # fuzzy match on opportunity owner
+#   ninja: none                                   # "none" = unassigned; any name = fuzzy match
+#   type: New Business                            # fuzzy single value
+#   type: [New Business, Up-sell and Retention]   # exact multi-value
+#   stage: open                                   # preset: excludes won/lost
+#   stage: "4. Closing"                           # fuzzy single value
+#   stage: ["3. Value Proposal", "4. Closing"]    # exact multi-value
+#   territory: [North America]                    # list; NA and EU are aliases
+#   include_ninjas: [name]                        # OR-in specific people not on current team
+
+# Full team pipeline — current and next quarter
+pipeline:
+  team: true
+  quarter: this+next
+
+# Late-stage deals this quarter
+closing:
+  team: true
+  quarter: this
+  stage: ["3. Value Proposal", "4. Closing"]
+
+# Opps needing staffing
+unassigned:
+  quarter: this+next
+  ninja: none
+
+# New business only
+newbiz:
+  team: true
+  quarter: this+next
+  type: New Business
+
+# Full portfolio — all open deals across the year
+portfolio:
+  team: true
+  stage: open
