@@ -308,8 +308,8 @@ def build_html(data, months, fetched_at, start_date, end_date):
         prior_totals[stage]  = sum(e[0] for e in all_entries if not e[3])
         prior_counts[stage]  = sum(1     for e in all_entries if not e[3])
 
-    # ---- deal data for drill-down (sorted by ACV desc) ----
-    stage_deals = {}
+    # ---- deal data for drill-down (sorted by ACV desc, indexed by stage order) ----
+    stage_deals_list = []
     for stage in TARGET_STAGES:
         deals = []
         for ym in months:
@@ -320,8 +320,8 @@ def build_html(data, months, fetched_at, start_date, end_date):
                     "inWindow": in_window,
                 })
         deals.sort(key=lambda d: d["acv"], reverse=True)
-        stage_deals[STAGE_LABELS[stage]] = deals
-    stage_deals_js = json.dumps(stage_deals)
+        stage_deals_list.append(deals)
+    stage_deals_js = json.dumps(stage_deals_list)
 
     def conv(a, b, use_count=False):
         num = stage_counts[b] if use_count else stage_totals[b]
@@ -376,7 +376,7 @@ def build_html(data, months, fetched_at, start_date, end_date):
                      f' &nbsp;·&nbsp; {conv(s1, stage, use_count=True)}% deals</div>')
 
         funnel_rows += f"""
-        <div class="funnel-stage clickable" onclick="togglePanel({label_js})" id="row-{i}">
+        <div class="funnel-stage clickable" onclick="togglePanel({i})" id="row-{i}">
           <div class="funnel-label">{label}</div>
           <div class="funnel-track">
             <div class="funnel-bar-wrap">
@@ -467,20 +467,18 @@ def build_html(data, months, fetched_at, start_date, end_date):
 const stageDeals = {stage_deals_js};
 const openPanels = {{}};
 
-function togglePanel(label) {{
-  const idx = {json.dumps([STAGE_LABELS[s] for s in TARGET_STAGES])}.indexOf(label);
-  if (idx === -1) return;
+function togglePanel(idx) {{
   const panel = document.getElementById('panel-' + idx);
   const icon  = document.getElementById('icon-'  + idx);
-  if (openPanels[label]) {{
+  if (openPanels[idx]) {{
     panel.style.display = 'none';
     icon.textContent = '▶';
-    delete openPanels[label];
+    delete openPanels[idx];
     return;
   }}
-  openPanels[label] = true;
+  openPanels[idx] = true;
   icon.textContent = '▼';
-  const deals = stageDeals[label] || [];
+  const deals = stageDeals[idx] || [];
   if (!deals.length) {{
     panel.innerHTML = '<div style="padding:8px 4px;color:#adb5bd;font-size:0.82rem">No deals in this stage for the selected period.</div>';
   }} else {{
