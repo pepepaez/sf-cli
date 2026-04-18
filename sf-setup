@@ -305,7 +305,7 @@ def main():
         "user_id":    user["Id"],
         "user_name":  user["Name"],
     })
-    config.setdefault("deal_types", ["New Business", "Up-sell and Retention", "Renewal"])
+    config.setdefault("deal_types", ["New Business", "Up-sell and Retention"])
     config.setdefault("note_statuses", ["Active", "Inactive"])
     config.setdefault("note_activities", [
         "Disco", "Demo (POM)", "PoC (POM)", "Agents Demo", "Agents Setup",
