@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Report: ACV movement through pipeline stages Jan → today.
 
-Outputs a self-contained HTML chart and a CSV, both in the current directory.
+Outputs a self-contained HTML chart and a CSV in reports/stage_flow/.
 Uses the portfolio view from views.yaml (team + include_ninjas + deal_types).
 """
 
@@ -32,6 +32,7 @@ TARGET_STAGES = [
     "2. Value Scenario",
     "3. Value Proposal",
     "4. Closing",
+    "5. Won",
 ]
 
 STAGE_LABELS = {
@@ -39,6 +40,7 @@ STAGE_LABELS = {
     "2. Value Scenario":     "Stage 2 – Value Scenario",
     "3. Value Proposal":     "Stage 3 – Value Proposal",
     "4. Closing":            "Stage 4 – Closing",
+    "5. Won":                "Stage 5 – Won",
 }
 
 STAGE_COLORS = [
@@ -46,6 +48,7 @@ STAGE_COLORS = [
     "#f28e2b",   # orange – stage 2
     "#59a14f",   # green  – stage 3
     "#e15759",   # red    – stage 4
+    "#76b7b2",   # teal   – stage 5 won
 ]
 
 
@@ -63,20 +66,31 @@ def stage_order(name):
         return -1
 
 
-def effective_order(record):
-    """Return the forward-progress order to use for regression checks.
+def matches_stage(new_value, target_stage):
+    """Check if a history NewValue matches a target stage.
 
-    Won opps count as order 5 (past all target stages).
-    Lost opps are excluded (return -1).
-    Active opps use their current stage order.
+    Stage 5 (Won) matches both numeric '5.*' and names containing 'won'
+    (e.g. 'Closed Won') since SF orgs vary in stage naming.
+    """
+    t_order = stage_order(target_stage)
+    e_order = stage_order(new_value or "")
+    if t_order == 5:
+        return e_order == 5 or "won" in (new_value or "").lower()
+    return e_order == t_order
+
+
+def effective_order(record):
+    """Return the forward-progress order for regression checks.
+
+    Won → 5, Lost → -1 (excluded), Active → current stage order.
     """
     is_closed = record.get("IsClosed", False)
     stage     = record.get("StageName", "") or ""
     order     = stage_order(stage)
     if is_closed:
         if order == 5 or "won" in stage.lower():
-            return 5   # Closed Won — counts for all stages 1-4
-        return -1      # Closed Lost — excluded
+            return 5
+        return -1   # Lost — excluded
     return order
 
 
@@ -84,19 +98,16 @@ def months_in_range(start_date_str):
     """Return list of 'YYYY-MM' strings from start month to current month."""
     start = datetime.strptime(start_date_str, "%Y-%m-%d")
     now   = datetime.now()
-    months = []
-    y, m  = start.year, start.month
+    months, y, m = [], start.year, start.month
     while (y, m) <= (now.year, now.month):
         months.append(f"{y}-{m:02d}")
         m += 1
         if m > 12:
-            m = 1
-            y += 1
+            m, y = 1, y + 1
     return months
 
 
 def month_label(ym):
-    """'2026-03' → 'Mar 2026'"""
     return datetime.strptime(ym, "%Y-%m").strftime("%b %Y")
 
 
@@ -105,9 +116,8 @@ def month_label(ym):
 # ---------------------------------------------------------------------------
 
 def load_portfolio_records():
-    """Load and filter opp records using portfolio view (same as sf_export)."""
     if not os.path.exists(OPP_CACHE_FILE):
-        print(f"  No cache found. Run: salesfx --refresh")
+        print("  No cache found. Run: salesfx --refresh")
         sys.exit(1)
 
     with open(OPP_CACHE_FILE) as f:
@@ -121,7 +131,7 @@ def load_portfolio_records():
     filter_args = argparse.Namespace(
         account=None, ae=None, ninja=None, type=None, all_stages=True,
         team=DEFAULT_MANAGER_ID if view.get("team") else None,
-        quarter=None,   # no quarter filter — we want all time for history
+        quarter=None,
         stage=None,
         territory=([territory] if isinstance(territory, str) else territory),
     )
@@ -147,10 +157,8 @@ def load_portfolio_records():
 
 
 def fetch_stage_history(opp_ids):
-    """Batch-fetch StageName change history since START_DATE for given opp IDs."""
     all_history = []
-    total = len(opp_ids)
-    for i in range(0, total, CHATTER_BATCH_SIZE):
+    for i in range(0, len(opp_ids), CHATTER_BATCH_SIZE):
         chunk   = opp_ids[i:i + CHATTER_BATCH_SIZE]
         ids_str = ", ".join(f"'{oid}'" for oid in chunk)
         query   = (
@@ -172,8 +180,14 @@ def fetch_stage_history(opp_ids):
 def build_flow_data(records, history):
     """Apply regression + re-entry rules and aggregate into monthly buckets.
 
-    Returns:
-        data[(ym, stage)] = list of (acv, opp_name, account_name)
+    Each entry is a 4-tuple: (acv, opp_name, account, in_window)
+
+    in_window=True  → the opp also has a previous-stage entry within this
+                       analysis period (full journey tracked).
+    in_window=False → the opp entered this stage within the period but its
+                       prior stage movement happened before the period started,
+                       or it skipped the previous stage entirely.
+                       Stage 1 entries are always in_window=True (no prior stage).
     """
     opp_lookup     = {r["Id"]: r for r in records}
     history_by_opp = defaultdict(list)
@@ -191,31 +205,46 @@ def build_flow_data(records, history):
 
         eff_order = effective_order(r)
         if eff_order < 1:
-            continue   # Lost or unknown — skip
+            continue   # Lost — skip
 
         acv     = r.get("_acv", 0) or 0
         name    = r.get("Name", "")
         account = r.get("Account.Name", "")
 
+        # Which stages did this opp enter within the window?
+        stages_in_window = {
+            stage_order(e.get("NewValue", ""))
+            for e in entries
+        }
+        # Also flag Won entries by name
+        if any("won" in (e.get("NewValue") or "").lower() for e in entries):
+            stages_in_window.add(5)
+
         for stage in TARGET_STAGES:
             s_order = stage_order(stage)
             if eff_order < s_order:
-                continue  # opp has regressed below this stage — skip
+                continue  # regressed below this stage — skip
 
-            # All history entries where this opp entered this stage
             entries_for_stage = [
-                e for e in entries
-                if stage_order(e.get("NewValue", "")) == s_order
+                e for e in entries if matches_stage(e.get("NewValue", ""), stage)
             ]
             if not entries_for_stage:
                 continue
 
-            # Most recent entry (re-entry rule: only the latest counts)
+            # Most recent entry (re-entry rule)
             entries_for_stage.sort(key=lambda e: e.get("CreatedDate", ""), reverse=True)
-            latest_date = entries_for_stage[0].get("CreatedDate", "")
-            ym = latest_date[:7]  # YYYY-MM
-            if ym:
-                data[(ym, stage)].append((acv, name, account))
+            ym = entries_for_stage[0].get("CreatedDate", "")[:7]
+            if not ym:
+                continue
+
+            # in_window: stage 1 always True; otherwise check if prev stage
+            # was also entered within the window
+            if s_order <= 1:
+                in_window = True
+            else:
+                in_window = (s_order - 1) in stages_in_window
+
+            data[(ym, stage)].append((acv, name, account, in_window))
 
     return data
 
@@ -226,35 +255,17 @@ def build_flow_data(records, history):
 
 def build_html(data, months, fetched_at):
     # ---- aggregate totals ----
-    stage_totals = {}
-    stage_counts = {}
-    for i, stage in enumerate(TARGET_STAGES):
-        entries_all = [e for ym in months for e in data.get((ym, stage), [])]
-        stage_totals[stage] = sum(e[0] for e in entries_all)
-        stage_counts[stage] = len(entries_all)
+    stage_totals  = {}
+    stage_counts  = {}
+    prior_totals  = {}   # ACV where in_window=False
+    prior_counts  = {}
+    for stage in TARGET_STAGES:
+        all_entries = [e for ym in months for e in data.get((ym, stage), [])]
+        stage_totals[stage] = sum(e[0] for e in all_entries)
+        stage_counts[stage] = len(all_entries)
+        prior_totals[stage] = sum(e[0] for e in all_entries if not e[3])
+        prior_counts[stage] = sum(1     for e in all_entries if not e[3])
 
-    # ---- monthly conversion datasets (ratio of ACV entering Sn+1 vs Sn) ----
-    CONV_PAIRS = [
-        ("S1→S2", TARGET_STAGES[0], TARGET_STAGES[1], "#4e79a7"),
-        ("S2→S3", TARGET_STAGES[1], TARGET_STAGES[2], "#f28e2b"),
-        ("S3→S4", TARGET_STAGES[2], TARGET_STAGES[3], "#59a14f"),
-    ]
-    conv_datasets = []
-    for label, from_s, to_s, color in CONV_PAIRS:
-        points = []
-        for ym in months:
-            from_acv = sum(e[0] for e in data.get((ym, from_s), []))
-            to_acv   = sum(e[0] for e in data.get((ym, to_s),   []))
-            points.append(round(to_acv / from_acv * 100, 1) if from_acv else None)
-        conv_datasets.append({
-            "label": label, "data": points,
-            "borderColor": color, "backgroundColor": color,
-            "tension": 0.3, "pointRadius": 4,
-            "spanGaps": False,
-        })
-    conv_datasets_js = json.dumps(conv_datasets)
-
-    # ---- conversion rates (stage N → stage N+1) ----
     def conv(a, b, use_count=False):
         num = stage_counts[b] if use_count else stage_totals[b]
         den = stage_counts[a] if use_count else stage_totals[a]
@@ -263,9 +274,10 @@ def build_html(data, months, fetched_at):
     # ---- bar chart datasets ----
     datasets = []
     for i, stage in enumerate(TARGET_STAGES):
-        monthly_acv = []
-        for ym in months:
-            monthly_acv.append(round(sum(e[0] for e in data.get((ym, stage), []))))
+        monthly_acv = [
+            round(sum(e[0] for e in data.get((ym, stage), [])))
+            for ym in months
+        ]
         datasets.append({
             "label":           STAGE_LABELS[stage],
             "data":            monthly_acv,
@@ -281,37 +293,65 @@ def build_html(data, months, fetched_at):
     # ---- funnel rows ----
     funnel_rows = ""
     for i, stage in enumerate(TARGET_STAGES):
-        acv    = stage_totals[stage]
-        count  = stage_counts[stage]
-        color  = STAGE_COLORS[i]
-        width  = round(acv / max_acv * 100)
-        label  = STAGE_LABELS[stage]
+        acv       = stage_totals[stage]
+        count     = stage_counts[stage]
+        p_acv     = prior_totals[stage]
+        p_count   = prior_counts[stage]
+        color     = STAGE_COLORS[i]
+        color_dim = color + "66"   # 40% opacity for prior-period segment
+        label     = STAGE_LABELS[stage]
 
+        # Bar widths: in-window fills proportionally, prior adds to it
+        in_w_acv  = acv - p_acv
+        bar_main  = round(in_w_acv / max_acv * 100)
+        bar_prior = round(p_acv    / max_acv * 100)
+
+        prior_note = ""
+        if p_count > 0:
+            prior_note = (
+                f'<div class="prior-note">'
+                f'⚠ {p_count} deal{"s" if p_count>1 else ""} '
+                f'(€{p_acv:,.0f}) entered this stage with no prior-stage '
+                f'movement recorded since Jan {START_YEAR}'
+                f'</div>'
+            )
+
+        # Arrow between stages
         if i < len(TARGET_STAGES) - 1:
-            next_stage   = TARGET_STAGES[i + 1]
-            acv_conv     = conv(stage, next_stage)
-            count_conv   = conv(stage, next_stage, use_count=True)
-            arrow = (f'<div class="arrow">'
-                     f'↓ &nbsp;{acv_conv}% ACV &nbsp;·&nbsp; {count_conv}% deals'
-                     f'</div>')
+            next_s     = TARGET_STAGES[i + 1]
+            acv_conv   = conv(stage, next_s)
+            cnt_conv   = conv(stage, next_s, use_count=True)
+            arrow = (f'<div class="arrow">↓ &nbsp;'
+                     f'{acv_conv}% ACV &nbsp;·&nbsp; {cnt_conv}% deals</div>')
         else:
-            s1       = TARGET_STAGES[0]
-            ov_acv   = conv(s1, stage)
-            ov_count = conv(s1, stage, use_count=True)
+            s1 = TARGET_STAGES[0]
             arrow = (f'<div class="arrow overall">'
-                     f'S1 → S4: &nbsp;{ov_acv}% ACV &nbsp;·&nbsp; {ov_count}% deals'
+                     f'S1 → Won: &nbsp;{conv(s1, stage)}% ACV'
+                     f' &nbsp;·&nbsp; {conv(s1, stage, use_count=True)}% deals'
                      f'</div>')
 
         funnel_rows += f"""
         <div class="funnel-stage">
           <div class="funnel-label">{label}</div>
           <div class="funnel-track">
-            <div class="funnel-bar" style="width:{width}%;background:{color}">
-              <span class="funnel-bar-text">€{acv:,.0f} &nbsp;·&nbsp; {count} deals</span>
+            <div class="funnel-bar-wrap">
+              <div class="funnel-bar" style="width:{bar_main}%;background:{color}"></div>
+              <div class="funnel-bar prior" style="width:{bar_prior}%;background:{color_dim}"></div>
             </div>
+            <span class="funnel-stat">€{acv:,.0f} &nbsp;·&nbsp; {count} deals</span>
           </div>
         </div>
+        {prior_note}
         {arrow}"""
+
+    # ---- legend ----
+    legend = (
+        '<div class="legend">'
+        '<span class="leg-swatch" style="background:#666"></span> Fully tracked within period'
+        '&nbsp;&nbsp;'
+        '<span class="leg-swatch" style="background:#bbb"></span> Prior period / stage skipped'
+        '</div>'
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -330,16 +370,22 @@ def build_html(data, months, fetched_at):
   .card h2 {{ font-size: 1rem; margin: 0 0 20px; color: #495057; }}
 
   /* funnel */
-  .funnel-stage  {{ display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }}
-  .funnel-label  {{ width: 200px; font-size: 0.85rem; color: #495057; flex-shrink: 0; }}
-  .funnel-track  {{ flex: 1; background: #f1f3f5; border-radius: 4px; height: 36px; }}
-  .funnel-bar    {{ height: 100%; border-radius: 4px; display: flex;
-                    align-items: center; min-width: 60px; transition: width .4s; }}
-  .funnel-bar-text {{ padding: 0 12px; color: #fff; font-size: 0.82rem;
-                      font-weight: 600; white-space: nowrap; }}
-  .arrow         {{ margin: 2px 0 6px 212px; font-size: 0.82rem; color: #868e96; }}
-  .overall       {{ color: #212529; font-weight: 600; margin-top: 4px; }}
-  .note          {{ color: #868e96; font-size: 0.8rem; margin: -12px 0 16px; }}
+  .funnel-stage   {{ display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }}
+  .funnel-label   {{ width: 210px; font-size: 0.85rem; color: #495057; flex-shrink: 0; }}
+  .funnel-track   {{ flex: 1; display: flex; align-items: center; gap: 8px; }}
+  .funnel-bar-wrap {{ flex: 1; background: #f1f3f5; border-radius: 4px; height: 34px;
+                      display: flex; overflow: hidden; }}
+  .funnel-bar     {{ height: 100%; transition: width .4s; flex-shrink: 0; }}
+  .funnel-bar.prior {{ opacity: 0.55; }}
+  .funnel-stat    {{ font-size: 0.82rem; color: #495057; white-space: nowrap;
+                     font-weight: 600; min-width: 180px; }}
+  .prior-note     {{ margin: 1px 0 4px 222px; font-size: 0.78rem; color: #e67700; }}
+  .arrow          {{ margin: 2px 0 6px 222px; font-size: 0.82rem; color: #868e96; }}
+  .overall        {{ color: #212529; font-weight: 600; margin-top: 4px; }}
+  .legend         {{ margin-top: 20px; font-size: 0.8rem; color: #868e96;
+                     display: flex; align-items: center; gap: 6px; }}
+  .leg-swatch     {{ display: inline-block; width: 12px; height: 12px;
+                     border-radius: 2px; }}
 </style>
 </head>
 <body>
@@ -350,14 +396,7 @@ def build_html(data, months, fetched_at):
 <div class="card">
   <h2>Conversion Funnel</h2>
   {funnel_rows}
-</div>
-
-<div class="card">
-  <h2>Monthly Conversion Rates</h2>
-  <p class="note">Ratio of ACV entering each stage vs the prior stage in the same month.
-  A value above 100% means more ACV advanced than entered the previous stage that month
-  (delayed conversions from earlier months flowing through).</p>
-  <canvas id="conv-chart" height="90"></canvas>
+  {legend}
 </div>
 
 <div class="card">
@@ -366,34 +405,6 @@ def build_html(data, months, fetched_at):
 </div>
 
 <script>
-new Chart(document.getElementById('conv-chart'), {{
-  type: 'line',
-  data: {{
-    labels: {labels_js},
-    datasets: {conv_datasets_js}
-  }},
-  options: {{
-    responsive: true,
-    plugins: {{
-      legend: {{ position: 'top' }},
-      tooltip: {{
-        callbacks: {{
-          label: ctx => ctx.parsed.y !== null
-            ? ` ${{ctx.dataset.label}}: ${{ctx.parsed.y}}%`
-            : ` ${{ctx.dataset.label}}: no data`
-        }}
-      }}
-    }},
-    scales: {{
-      x: {{ grid: {{ display: false }} }},
-      y: {{
-        ticks: {{ callback: v => v + '%' }},
-        grid: {{ color: '#f1f3f5' }}
-      }}
-    }}
-  }}
-}});
-
 new Chart(document.getElementById('chart'), {{
   type: 'bar',
   data: {{
@@ -435,20 +446,23 @@ new Chart(document.getElementById('chart'), {{
 def write_csv(data, months, path):
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["Month", "Stage", "ACV (EUR)", "Opp Count", "Opportunities"])
+        writer.writerow([
+            "Month", "Stage", "ACV (EUR)", "Opp Count",
+            "Prior Period Count", "Opportunities",
+        ])
         for ym in months:
             for stage in TARGET_STAGES:
                 entries = data.get((ym, stage), [])
                 if not entries:
                     continue
-                acv   = sum(e[0] for e in entries)
-                names = "; ".join(e[1] for e in entries)
+                acv       = sum(e[0] for e in entries)
+                prior_cnt = sum(1 for e in entries if not e[3])
+                names     = "; ".join(
+                    f"{e[1]}{' *' if not e[3] else ''}" for e in entries
+                )
                 writer.writerow([
-                    month_label(ym),
-                    STAGE_LABELS[stage],
-                    round(acv),
-                    len(entries),
-                    names,
+                    month_label(ym), STAGE_LABELS[stage],
+                    round(acv), len(entries), prior_cnt, names,
                 ])
 
 
