@@ -308,6 +308,21 @@ def build_html(data, months, fetched_at, start_date, end_date):
         prior_totals[stage]  = sum(e[0] for e in all_entries if not e[3])
         prior_counts[stage]  = sum(1     for e in all_entries if not e[3])
 
+    # ---- deal data for drill-down (sorted by ACV desc) ----
+    stage_deals = {}
+    for stage in TARGET_STAGES:
+        deals = []
+        for ym in months:
+            for acv, name, account, in_window in data.get((ym, stage), []):
+                deals.append({
+                    "name": name, "account": account,
+                    "acv": round(acv), "month": month_label(ym),
+                    "inWindow": in_window,
+                })
+        deals.sort(key=lambda d: d["acv"], reverse=True)
+        stage_deals[STAGE_LABELS[stage]] = deals
+    stage_deals_js = json.dumps(stage_deals)
+
     def conv(a, b, use_count=False):
         num = stage_counts[b] if use_count else stage_totals[b]
         den = stage_counts[a] if use_count else stage_totals[a]
@@ -337,6 +352,8 @@ def build_html(data, months, fetched_at, start_date, end_date):
         p_count = prior_counts[stage]
         color   = STAGE_COLORS[i]
         in_w    = acv - p_acv
+        label   = STAGE_LABELS[stage]
+        label_js = json.dumps(label)
 
         bar_main  = round(in_w  / max_acv * 100)
         bar_prior = round(p_acv / max_acv * 100)
@@ -359,8 +376,8 @@ def build_html(data, months, fetched_at, start_date, end_date):
                      f' &nbsp;·&nbsp; {conv(s1, stage, use_count=True)}% deals</div>')
 
         funnel_rows += f"""
-        <div class="funnel-stage">
-          <div class="funnel-label">{STAGE_LABELS[stage]}</div>
+        <div class="funnel-stage clickable" onclick="togglePanel({label_js})" id="row-{i}">
+          <div class="funnel-label">{label}</div>
           <div class="funnel-track">
             <div class="funnel-bar-wrap">
               <div class="funnel-bar" style="width:{bar_main}%;background:{color}"></div>
@@ -368,7 +385,9 @@ def build_html(data, months, fetched_at, start_date, end_date):
             </div>
             <span class="funnel-stat">€{acv:,.0f} &nbsp;·&nbsp; {count} deals</span>
           </div>
+          <span class="toggle-icon" id="icon-{i}">▶</span>
         </div>
+        <div class="deal-panel" id="panel-{i}"></div>
         {prior_note}
         {arrow}"""
 
@@ -394,7 +413,10 @@ def build_html(data, months, fetched_at, start_date, end_date):
   .card {{ background: #fff; border-radius: 8px; padding: 24px;
            box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 24px; }}
   .card h2 {{ font-size: 1rem; margin: 0 0 20px; color: #495057; }}
-  .funnel-stage   {{ display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }}
+  .funnel-stage   {{ display: flex; align-items: center; gap: 12px; margin-bottom: 4px;
+                     border-radius: 6px; padding: 2px 4px; }}
+  .funnel-stage.clickable {{ cursor: pointer; }}
+  .funnel-stage.clickable:hover {{ background: #f8f9fa; }}
   .funnel-label   {{ width: 210px; font-size: 0.85rem; color: #495057; flex-shrink: 0; }}
   .funnel-track   {{ flex: 1; display: flex; align-items: center; gap: 8px; }}
   .funnel-bar-wrap {{ flex: 1; background: #f1f3f5; border-radius: 4px; height: 34px;
@@ -403,6 +425,7 @@ def build_html(data, months, fetched_at, start_date, end_date):
   .funnel-bar.prior {{ opacity: 0.35; }}
   .funnel-stat    {{ font-size: 0.82rem; color: #495057; white-space: nowrap;
                      font-weight: 600; min-width: 180px; }}
+  .toggle-icon    {{ font-size: 0.7rem; color: #adb5bd; flex-shrink: 0; width: 14px; }}
   .prior-note     {{ margin: 1px 0 4px 222px; font-size: 0.78rem; color: #e67700; }}
   .arrow          {{ margin: 2px 0 6px 222px; font-size: 0.82rem; color: #868e96; }}
   .overall        {{ color: #212529; font-weight: 600; margin-top: 4px; }}
@@ -411,6 +434,17 @@ def build_html(data, months, fetched_at, start_date, end_date):
   .leg-swatch     {{ display: inline-block; width: 14px; height: 14px;
                      border-radius: 2px; background: #4e79a7; }}
   .leg-swatch.prior {{ opacity: 0.35; }}
+
+  /* deal panel */
+  .deal-panel     {{ display: none; margin: 0 0 8px 4px; overflow: hidden; }}
+  .deal-panel table {{ width: 100%; border-collapse: collapse; font-size: 0.82rem; }}
+  .deal-panel th  {{ background: #f8f9fa; font-weight: 600; padding: 6px 10px;
+                     text-align: left; border-bottom: 1px solid #e9ecef; color: #6c757d; }}
+  .deal-panel td  {{ padding: 6px 10px; border-bottom: 1px solid #f1f3f5; }}
+  .deal-panel tr:last-child td {{ border-bottom: none; }}
+  .deal-panel tr:hover td {{ background: #f8f9fa; }}
+  .deal-panel .acv {{ text-align: right; font-variant-numeric: tabular-nums; }}
+  .deal-panel .warn {{ color: #e67700; font-size: 0.75rem; }}
 </style>
 </head>
 <body>
@@ -419,7 +453,7 @@ def build_html(data, months, fetched_at, start_date, end_date):
 &nbsp;·&nbsp; Generated {today_str}</p>
 
 <div class="card">
-  <h2>Conversion Funnel</h2>
+  <h2>Conversion Funnel &nbsp;<span style="font-size:0.8rem;font-weight:400;color:#adb5bd">click a stage to see deals</span></h2>
   {funnel_rows}
   {legend}
 </div>
@@ -430,6 +464,43 @@ def build_html(data, months, fetched_at, start_date, end_date):
 </div>
 
 <script>
+const stageDeals = {stage_deals_js};
+const openPanels = {{}};
+
+function togglePanel(label) {{
+  const idx = {json.dumps([STAGE_LABELS[s] for s in TARGET_STAGES])}.indexOf(label);
+  if (idx === -1) return;
+  const panel = document.getElementById('panel-' + idx);
+  const icon  = document.getElementById('icon-'  + idx);
+  if (openPanels[label]) {{
+    panel.style.display = 'none';
+    icon.textContent = '▶';
+    delete openPanels[label];
+    return;
+  }}
+  openPanels[label] = true;
+  icon.textContent = '▼';
+  const deals = stageDeals[label] || [];
+  if (!deals.length) {{
+    panel.innerHTML = '<div style="padding:8px 4px;color:#adb5bd;font-size:0.82rem">No deals in this stage for the selected period.</div>';
+  }} else {{
+    const rows = deals.map(d =>
+      `<tr>
+        <td>${{d.account}}</td>
+        <td>${{d.name}}</td>
+        <td class="acv">€${{d.acv.toLocaleString()}}</td>
+        <td>${{d.month}}</td>
+        <td>${{d.inWindow ? '' : '<span class="warn">⚠ prior period</span>'}}</td>
+      </tr>`
+    ).join('');
+    panel.innerHTML = `<table>
+      <thead><tr><th>Account</th><th>Opportunity</th><th style="text-align:right">ACV</th><th>Month</th><th></th></tr></thead>
+      <tbody>${{rows}}</tbody>
+    </table>`;
+  }}
+  panel.style.display = 'block';
+}}
+
 new Chart(document.getElementById('chart'), {{
   type: 'bar',
   data: {{
