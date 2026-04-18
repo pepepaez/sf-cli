@@ -10,6 +10,5 @@ notes_history.json
 session_notes*.csv
 cache/
 docs/
-stage_flow_*.html
-stage_flow_*.csv
+reports/stage_flow/
 team_capacity/

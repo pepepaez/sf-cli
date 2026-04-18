@@ -23,6 +23,7 @@ from shared import (
 )
 
 SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR  = os.path.join(SCRIPT_DIR, "reports", "stage_flow")
 START_YEAR  = datetime.now().year
 START_DATE  = f"{START_YEAR}-01-01"
 
@@ -224,18 +225,26 @@ def build_flow_data(records, history):
 # ---------------------------------------------------------------------------
 
 def build_html(data, months, fetched_at):
-    datasets = []
+    # ---- aggregate totals ----
     stage_totals = {}
+    stage_counts = {}
+    for i, stage in enumerate(TARGET_STAGES):
+        entries_all = [e for ym in months for e in data.get((ym, stage), [])]
+        stage_totals[stage] = sum(e[0] for e in entries_all)
+        stage_counts[stage] = len(entries_all)
 
+    # ---- conversion rates (stage N → stage N+1) ----
+    def conv(a, b, use_count=False):
+        num = stage_counts[b] if use_count else stage_totals[b]
+        den = stage_counts[a] if use_count else stage_totals[a]
+        return round(num / den * 100, 1) if den else 0
+
+    # ---- bar chart datasets ----
+    datasets = []
     for i, stage in enumerate(TARGET_STAGES):
         monthly_acv = []
-        total = 0
         for ym in months:
-            entries = data.get((ym, stage), [])
-            acv = sum(e[0] for e in entries)
-            monthly_acv.append(round(acv))
-            total += acv
-        stage_totals[stage] = total
+            monthly_acv.append(round(sum(e[0] for e in data.get((ym, stage), []))))
         datasets.append({
             "label":           STAGE_LABELS[stage],
             "data":            monthly_acv,
@@ -243,17 +252,45 @@ def build_html(data, months, fetched_at):
             "borderRadius":    4,
         })
 
-    labels_js      = json.dumps([month_label(m) for m in months])
-    datasets_js    = json.dumps(datasets)
-    today_str      = datetime.now().strftime("%B %d, %Y")
-    grand_total    = sum(stage_totals.values())
+    labels_js   = json.dumps([month_label(m) for m in months])
+    datasets_js = json.dumps(datasets)
+    today_str   = datetime.now().strftime("%B %d, %Y")
+    max_acv     = stage_totals[TARGET_STAGES[0]] or 1
 
-    summary_rows = "".join(
-        f'<tr><td>{STAGE_LABELS[s]}</td>'
-        f'<td style="text-align:right">€{stage_totals[s]:,.0f}</td>'
-        f'<td style="text-align:right">{sum(len(v) for k,v in data.items() if k[1]==s)}</td></tr>'
-        for s in TARGET_STAGES
-    )
+    # ---- funnel rows ----
+    funnel_rows = ""
+    for i, stage in enumerate(TARGET_STAGES):
+        acv    = stage_totals[stage]
+        count  = stage_counts[stage]
+        color  = STAGE_COLORS[i]
+        width  = round(acv / max_acv * 100)
+        label  = STAGE_LABELS[stage]
+
+        if i < len(TARGET_STAGES) - 1:
+            next_stage   = TARGET_STAGES[i + 1]
+            acv_conv     = conv(stage, next_stage)
+            count_conv   = conv(stage, next_stage, use_count=True)
+            arrow = (f'<div class="arrow">'
+                     f'↓ &nbsp;{acv_conv}% ACV &nbsp;·&nbsp; {count_conv}% deals'
+                     f'</div>')
+        else:
+            s1       = TARGET_STAGES[0]
+            ov_acv   = conv(s1, stage)
+            ov_count = conv(s1, stage, use_count=True)
+            arrow = (f'<div class="arrow overall">'
+                     f'S1 → S4: &nbsp;{ov_acv}% ACV &nbsp;·&nbsp; {ov_count}% deals'
+                     f'</div>')
+
+        funnel_rows += f"""
+        <div class="funnel-stage">
+          <div class="funnel-label">{label}</div>
+          <div class="funnel-track">
+            <div class="funnel-bar" style="width:{width}%;background:{color}">
+              <span class="funnel-bar-text">€{acv:,.0f} &nbsp;·&nbsp; {count} deals</span>
+            </div>
+          </div>
+        </div>
+        {arrow}"""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -267,38 +304,36 @@ def build_html(data, months, fetched_at):
          background: #f8f9fa; color: #212529; margin: 0; padding: 24px; }}
   h1   {{ font-size: 1.4rem; margin-bottom: 4px; }}
   .sub {{ color: #6c757d; font-size: 0.9rem; margin-bottom: 32px; }}
-  .chart-wrap {{ background: #fff; border-radius: 8px; padding: 24px;
-                 box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 24px; }}
-  table {{ border-collapse: collapse; width: 100%; max-width: 520px;
-           background: #fff; border-radius: 8px;
-           box-shadow: 0 1px 4px rgba(0,0,0,.08); overflow: hidden; }}
-  th, td {{ padding: 10px 16px; text-align: left; font-size: 0.9rem; }}
-  th {{ background: #f1f3f5; font-weight: 600; }}
-  tr:not(:last-child) td {{ border-bottom: 1px solid #f1f3f5; }}
-  .total td {{ font-weight: 600; border-top: 2px solid #dee2e6; }}
+  .card {{ background: #fff; border-radius: 8px; padding: 24px;
+           box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 24px; }}
+  .card h2 {{ font-size: 1rem; margin: 0 0 20px; color: #495057; }}
+
+  /* funnel */
+  .funnel-stage  {{ display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }}
+  .funnel-label  {{ width: 200px; font-size: 0.85rem; color: #495057; flex-shrink: 0; }}
+  .funnel-track  {{ flex: 1; background: #f1f3f5; border-radius: 4px; height: 36px; }}
+  .funnel-bar    {{ height: 100%; border-radius: 4px; display: flex;
+                    align-items: center; min-width: 60px; transition: width .4s; }}
+  .funnel-bar-text {{ padding: 0 12px; color: #fff; font-size: 0.82rem;
+                      font-weight: 600; white-space: nowrap; }}
+  .arrow         {{ margin: 2px 0 6px 212px; font-size: 0.82rem; color: #868e96; }}
+  .overall       {{ color: #212529; font-weight: 600; margin-top: 4px; }}
 </style>
 </head>
 <body>
 <h1>Pipeline Stage Flow — {START_YEAR}</h1>
-<p class="sub">ACV (EUR) entering each stage, Jan {START_YEAR} → {today_str} &nbsp;·&nbsp;
-Cache from {fetched_at}</p>
+<p class="sub">ACV (EUR) entering each stage, Jan {START_YEAR} → {today_str}
+&nbsp;·&nbsp; Cache from {fetched_at}</p>
 
-<div class="chart-wrap">
-  <canvas id="chart" height="90"></canvas>
+<div class="card">
+  <h2>Conversion Funnel</h2>
+  {funnel_rows}
 </div>
 
-<table>
-  <thead><tr><th>Stage</th><th style="text-align:right">Total ACV</th>
-  <th style="text-align:right">Movements</th></tr></thead>
-  <tbody>
-  {summary_rows}
-  <tr class="total">
-    <td>Total</td>
-    <td style="text-align:right">€{grand_total:,.0f}</td>
-    <td style="text-align:right">{sum(len(v) for v in data.values())}</td>
-  </tr>
-  </tbody>
-</table>
+<div class="card">
+  <h2>Monthly Activity</h2>
+  <canvas id="chart" height="90"></canvas>
+</div>
 
 <script>
 new Chart(document.getElementById('chart'), {{
@@ -387,9 +422,10 @@ def main():
     months = months_in_range(START_DATE)
     data   = build_flow_data(records, history)
 
-    stamp    = datetime.now().strftime("%Y%m%d")
-    html_out = os.path.join(SCRIPT_DIR, f"stage_flow_{stamp}.html")
-    csv_out  = os.path.join(SCRIPT_DIR, f"stage_flow_{stamp}.csv")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    stamp    = datetime.now().strftime("%Y%m%d_%H%M")
+    html_out = os.path.join(OUTPUT_DIR, f"stage_flow_{stamp}.html")
+    csv_out  = os.path.join(OUTPUT_DIR, f"stage_flow_{stamp}.csv")
 
     with open(html_out, "w", encoding="utf-8") as f:
         f.write(build_html(data, months, fetched_at))
