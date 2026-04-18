@@ -1,0 +1,408 @@
+#!/usr/bin/env python3
+"""Report: ACV movement through pipeline stages Jan → today.
+
+Outputs a self-contained HTML chart and a CSV, both in the current directory.
+Uses the portfolio view from views.yaml (team + include_ninjas + deal_types).
+"""
+
+import argparse
+import csv
+import json
+import os
+import sys
+from collections import defaultdict
+from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sfq
+from constants import CHATTER_BATCH_SIZE
+from shared import (
+    OPP_CACHE_FILE, DEFAULT_MANAGER_ID, DEAL_TYPES,
+    GREEN, RESET, DIM, BOLD, YELLOW,
+    enrich, load_views, apply_filters,
+)
+
+SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
+START_YEAR  = datetime.now().year
+START_DATE  = f"{START_YEAR}-01-01"
+
+TARGET_STAGES = [
+    "1. Qualified Prospect",
+    "2. Value Scenario",
+    "3. Value Proposal",
+    "4. Closing",
+]
+
+STAGE_LABELS = {
+    "1. Qualified Prospect": "Stage 1 – Qualified Prospect",
+    "2. Value Scenario":     "Stage 2 – Value Scenario",
+    "3. Value Proposal":     "Stage 3 – Value Proposal",
+    "4. Closing":            "Stage 4 – Closing",
+}
+
+STAGE_COLORS = [
+    "#4e79a7",   # blue   – stage 1
+    "#f28e2b",   # orange – stage 2
+    "#59a14f",   # green  – stage 3
+    "#e15759",   # red    – stage 4
+]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def stage_order(name):
+    """Return numeric prefix of a stage name, e.g. '3. Value Proposal' → 3."""
+    if not name:
+        return -1
+    try:
+        return int(str(name).split(".")[0])
+    except (ValueError, AttributeError):
+        return -1
+
+
+def effective_order(record):
+    """Return the forward-progress order to use for regression checks.
+
+    Won opps count as order 5 (past all target stages).
+    Lost opps are excluded (return -1).
+    Active opps use their current stage order.
+    """
+    is_closed = record.get("IsClosed", False)
+    stage     = record.get("StageName", "") or ""
+    order     = stage_order(stage)
+    if is_closed:
+        if order == 5 or "won" in stage.lower():
+            return 5   # Closed Won — counts for all stages 1-4
+        return -1      # Closed Lost — excluded
+    return order
+
+
+def months_in_range(start_date_str):
+    """Return list of 'YYYY-MM' strings from start month to current month."""
+    start = datetime.strptime(start_date_str, "%Y-%m-%d")
+    now   = datetime.now()
+    months = []
+    y, m  = start.year, start.month
+    while (y, m) <= (now.year, now.month):
+        months.append(f"{y}-{m:02d}")
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return months
+
+
+def month_label(ym):
+    """'2026-03' → 'Mar 2026'"""
+    return datetime.strptime(ym, "%Y-%m").strftime("%b %Y")
+
+
+# ---------------------------------------------------------------------------
+# Salesforce fetch
+# ---------------------------------------------------------------------------
+
+def load_portfolio_records():
+    """Load and filter opp records using portfolio view (same as sf_export)."""
+    if not os.path.exists(OPP_CACHE_FILE):
+        print(f"  No cache found. Run: salesfx --refresh")
+        sys.exit(1)
+
+    with open(OPP_CACHE_FILE) as f:
+        cache_data = json.load(f)
+    fetched_at  = cache_data.get("fetched_at", "unknown")
+    all_records = cache_data["records"]
+
+    views = load_views()
+    view  = views.get("portfolio", {})
+    territory = view.get("territory")
+    filter_args = argparse.Namespace(
+        account=None, ae=None, ninja=None, type=None, all_stages=True,
+        team=DEFAULT_MANAGER_ID if view.get("team") else None,
+        quarter=None,   # no quarter filter — we want all time for history
+        stage=None,
+        territory=([territory] if isinstance(territory, str) else territory),
+    )
+    records = apply_filters(all_records, filter_args)
+
+    include_ninjas = view.get("include_ninjas", [])
+    if include_ninjas:
+        seen_ids = {r["Id"] for r in records}
+        no_team_vars = {**vars(filter_args), "team": None}
+        pool = apply_filters(all_records, argparse.Namespace(**no_team_vars))
+        for name in include_ninjas:
+            q = name.lower()
+            for r in pool:
+                if r["Id"] not in seen_ids and q in (r.get("Solution_Strategist1__r.Name", "") or "").lower():
+                    records.append(r)
+                    seen_ids.add(r["Id"])
+
+    if DEAL_TYPES:
+        records = [r for r in records if r.get("Type", "") in DEAL_TYPES]
+
+    records = enrich(records)
+    return records, fetched_at
+
+
+def fetch_stage_history(opp_ids):
+    """Batch-fetch StageName change history since START_DATE for given opp IDs."""
+    all_history = []
+    total = len(opp_ids)
+    for i in range(0, total, CHATTER_BATCH_SIZE):
+        chunk   = opp_ids[i:i + CHATTER_BATCH_SIZE]
+        ids_str = ", ".join(f"'{oid}'" for oid in chunk)
+        query   = (
+            "SELECT OpportunityId, OldValue, NewValue, CreatedDate "
+            "FROM OpportunityFieldHistory "
+            f"WHERE Field = 'StageName' "
+            f"AND OpportunityId IN ({ids_str}) "
+            f"AND CreatedDate >= {START_DATE}T00:00:00Z "
+            "ORDER BY OpportunityId, CreatedDate ASC"
+        )
+        all_history.extend(sfq.sf_query(query))
+    return all_history
+
+
+# ---------------------------------------------------------------------------
+# Processing
+# ---------------------------------------------------------------------------
+
+def build_flow_data(records, history):
+    """Apply regression + re-entry rules and aggregate into monthly buckets.
+
+    Returns:
+        data[(ym, stage)] = list of (acv, opp_name, account_name)
+    """
+    opp_lookup     = {r["Id"]: r for r in records}
+    history_by_opp = defaultdict(list)
+    for entry in history:
+        oid = entry.get("OpportunityId", "")
+        if oid:
+            history_by_opp[oid].append(entry)
+
+    data = defaultdict(list)
+
+    for opp_id, entries in history_by_opp.items():
+        r = opp_lookup.get(opp_id)
+        if not r:
+            continue
+
+        eff_order = effective_order(r)
+        if eff_order < 1:
+            continue   # Lost or unknown — skip
+
+        acv     = r.get("_acv", 0) or 0
+        name    = r.get("Name", "")
+        account = r.get("Account.Name", "")
+
+        for stage in TARGET_STAGES:
+            s_order = stage_order(stage)
+            if eff_order < s_order:
+                continue  # opp has regressed below this stage — skip
+
+            # All history entries where this opp entered this stage
+            entries_for_stage = [
+                e for e in entries
+                if stage_order(e.get("NewValue", "")) == s_order
+            ]
+            if not entries_for_stage:
+                continue
+
+            # Most recent entry (re-entry rule: only the latest counts)
+            entries_for_stage.sort(key=lambda e: e.get("CreatedDate", ""), reverse=True)
+            latest_date = entries_for_stage[0].get("CreatedDate", "")
+            ym = latest_date[:7]  # YYYY-MM
+            if ym:
+                data[(ym, stage)].append((acv, name, account))
+
+    return data
+
+
+# ---------------------------------------------------------------------------
+# HTML output
+# ---------------------------------------------------------------------------
+
+def build_html(data, months, fetched_at):
+    datasets = []
+    stage_totals = {}
+
+    for i, stage in enumerate(TARGET_STAGES):
+        monthly_acv = []
+        total = 0
+        for ym in months:
+            entries = data.get((ym, stage), [])
+            acv = sum(e[0] for e in entries)
+            monthly_acv.append(round(acv))
+            total += acv
+        stage_totals[stage] = total
+        datasets.append({
+            "label":           STAGE_LABELS[stage],
+            "data":            monthly_acv,
+            "backgroundColor": STAGE_COLORS[i],
+            "borderRadius":    4,
+        })
+
+    labels_js      = json.dumps([month_label(m) for m in months])
+    datasets_js    = json.dumps(datasets)
+    today_str      = datetime.now().strftime("%B %d, %Y")
+    grand_total    = sum(stage_totals.values())
+
+    summary_rows = "".join(
+        f'<tr><td>{STAGE_LABELS[s]}</td>'
+        f'<td style="text-align:right">€{stage_totals[s]:,.0f}</td>'
+        f'<td style="text-align:right">{sum(len(v) for k,v in data.items() if k[1]==s)}</td></tr>'
+        for s in TARGET_STAGES
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline Stage Flow</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background: #f8f9fa; color: #212529; margin: 0; padding: 24px; }}
+  h1   {{ font-size: 1.4rem; margin-bottom: 4px; }}
+  .sub {{ color: #6c757d; font-size: 0.9rem; margin-bottom: 32px; }}
+  .chart-wrap {{ background: #fff; border-radius: 8px; padding: 24px;
+                 box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 24px; }}
+  table {{ border-collapse: collapse; width: 100%; max-width: 520px;
+           background: #fff; border-radius: 8px;
+           box-shadow: 0 1px 4px rgba(0,0,0,.08); overflow: hidden; }}
+  th, td {{ padding: 10px 16px; text-align: left; font-size: 0.9rem; }}
+  th {{ background: #f1f3f5; font-weight: 600; }}
+  tr:not(:last-child) td {{ border-bottom: 1px solid #f1f3f5; }}
+  .total td {{ font-weight: 600; border-top: 2px solid #dee2e6; }}
+</style>
+</head>
+<body>
+<h1>Pipeline Stage Flow — {START_YEAR}</h1>
+<p class="sub">ACV (EUR) entering each stage, Jan {START_YEAR} → {today_str} &nbsp;·&nbsp;
+Cache from {fetched_at}</p>
+
+<div class="chart-wrap">
+  <canvas id="chart" height="90"></canvas>
+</div>
+
+<table>
+  <thead><tr><th>Stage</th><th style="text-align:right">Total ACV</th>
+  <th style="text-align:right">Movements</th></tr></thead>
+  <tbody>
+  {summary_rows}
+  <tr class="total">
+    <td>Total</td>
+    <td style="text-align:right">€{grand_total:,.0f}</td>
+    <td style="text-align:right">{sum(len(v) for v in data.values())}</td>
+  </tr>
+  </tbody>
+</table>
+
+<script>
+new Chart(document.getElementById('chart'), {{
+  type: 'bar',
+  data: {{
+    labels: {labels_js},
+    datasets: {datasets_js}
+  }},
+  options: {{
+    responsive: true,
+    plugins: {{
+      legend: {{ position: 'top' }},
+      tooltip: {{
+        callbacks: {{
+          label: ctx => ' ' + ctx.dataset.label + ':  €' +
+                 ctx.parsed.y.toLocaleString('en-EU')
+        }}
+      }}
+    }},
+    scales: {{
+      x: {{ grid: {{ display: false }} }},
+      y: {{
+        ticks: {{
+          callback: v => '€' + (v >= 1e6 ? (v/1e6).toFixed(1)+'M'
+                                         : (v/1e3).toFixed(0)+'K')
+        }},
+        grid: {{ color: '#f1f3f5' }}
+      }}
+    }}
+  }}
+}});
+</script>
+</body>
+</html>"""
+
+
+# ---------------------------------------------------------------------------
+# CSV output
+# ---------------------------------------------------------------------------
+
+def write_csv(data, months, path):
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Month", "Stage", "ACV (EUR)", "Opp Count", "Opportunities"])
+        for ym in months:
+            for stage in TARGET_STAGES:
+                entries = data.get((ym, stage), [])
+                if not entries:
+                    continue
+                acv   = sum(e[0] for e in entries)
+                names = "; ".join(e[1] for e in entries)
+                writer.writerow([
+                    month_label(ym),
+                    STAGE_LABELS[stage],
+                    round(acv),
+                    len(entries),
+                    names,
+                ])
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(description="ACV stage flow report")
+    parser.add_argument("--refresh", action="store_true",
+                        help="Re-fetch opportunity data from Salesforce first")
+    args = parser.parse_args()
+
+    if args.refresh:
+        print(f"\n  {BOLD}{YELLOW}Refreshing opportunity cache...{RESET}")
+        import subprocess
+        subprocess.run([sys.executable, os.path.join(SCRIPT_DIR, "salesfx"), "--refresh"],
+                       check=True)
+
+    print(f"\n  {DIM}Loading portfolio...{RESET}")
+    records, fetched_at = load_portfolio_records()
+    opp_ids = [r["Id"] for r in records if r.get("Id")]
+    print(f"  {len(opp_ids)} opportunities in scope")
+
+    print(f"  {DIM}Fetching stage history from Salesforce (since {START_DATE})...{RESET}")
+    history = fetch_stage_history(opp_ids)
+    print(f"  {len(history)} stage change events fetched")
+
+    months = months_in_range(START_DATE)
+    data   = build_flow_data(records, history)
+
+    stamp    = datetime.now().strftime("%Y%m%d")
+    html_out = os.path.join(SCRIPT_DIR, f"stage_flow_{stamp}.html")
+    csv_out  = os.path.join(SCRIPT_DIR, f"stage_flow_{stamp}.csv")
+
+    with open(html_out, "w", encoding="utf-8") as f:
+        f.write(build_html(data, months, fetched_at))
+
+    write_csv(data, months, csv_out)
+
+    total_acv = sum(sum(e[0] for e in v) for v in data.values())
+    print(f"\n  {GREEN}Done{RESET}")
+    print(f"  Total ACV in motion: €{total_acv:,.0f}")
+    print(f"  HTML → {html_out}")
+    print(f"  CSV  → {csv_out}")
+    print(f"\n  Open with: open {html_out}\n")
+
+
+if __name__ == "__main__":
+    main()
