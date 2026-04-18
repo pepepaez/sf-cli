@@ -233,6 +233,27 @@ def build_html(data, months, fetched_at):
         stage_totals[stage] = sum(e[0] for e in entries_all)
         stage_counts[stage] = len(entries_all)
 
+    # ---- monthly conversion datasets (ratio of ACV entering Sn+1 vs Sn) ----
+    CONV_PAIRS = [
+        ("S1→S2", TARGET_STAGES[0], TARGET_STAGES[1], "#4e79a7"),
+        ("S2→S3", TARGET_STAGES[1], TARGET_STAGES[2], "#f28e2b"),
+        ("S3→S4", TARGET_STAGES[2], TARGET_STAGES[3], "#59a14f"),
+    ]
+    conv_datasets = []
+    for label, from_s, to_s, color in CONV_PAIRS:
+        points = []
+        for ym in months:
+            from_acv = sum(e[0] for e in data.get((ym, from_s), []))
+            to_acv   = sum(e[0] for e in data.get((ym, to_s),   []))
+            points.append(round(to_acv / from_acv * 100, 1) if from_acv else None)
+        conv_datasets.append({
+            "label": label, "data": points,
+            "borderColor": color, "backgroundColor": color,
+            "tension": 0.3, "pointRadius": 4,
+            "spanGaps": False,
+        })
+    conv_datasets_js = json.dumps(conv_datasets)
+
     # ---- conversion rates (stage N → stage N+1) ----
     def conv(a, b, use_count=False):
         num = stage_counts[b] if use_count else stage_totals[b]
@@ -318,6 +339,7 @@ def build_html(data, months, fetched_at):
                       font-weight: 600; white-space: nowrap; }}
   .arrow         {{ margin: 2px 0 6px 212px; font-size: 0.82rem; color: #868e96; }}
   .overall       {{ color: #212529; font-weight: 600; margin-top: 4px; }}
+  .note          {{ color: #868e96; font-size: 0.8rem; margin: -12px 0 16px; }}
 </style>
 </head>
 <body>
@@ -331,11 +353,47 @@ def build_html(data, months, fetched_at):
 </div>
 
 <div class="card">
+  <h2>Monthly Conversion Rates</h2>
+  <p class="note">Ratio of ACV entering each stage vs the prior stage in the same month.
+  A value above 100% means more ACV advanced than entered the previous stage that month
+  (delayed conversions from earlier months flowing through).</p>
+  <canvas id="conv-chart" height="90"></canvas>
+</div>
+
+<div class="card">
   <h2>Monthly Activity</h2>
   <canvas id="chart" height="90"></canvas>
 </div>
 
 <script>
+new Chart(document.getElementById('conv-chart'), {{
+  type: 'line',
+  data: {{
+    labels: {labels_js},
+    datasets: {conv_datasets_js}
+  }},
+  options: {{
+    responsive: true,
+    plugins: {{
+      legend: {{ position: 'top' }},
+      tooltip: {{
+        callbacks: {{
+          label: ctx => ctx.parsed.y !== null
+            ? ` ${{ctx.dataset.label}}: ${{ctx.parsed.y}}%`
+            : ` ${{ctx.dataset.label}}: no data`
+        }}
+      }}
+    }},
+    scales: {{
+      x: {{ grid: {{ display: false }} }},
+      y: {{
+        ticks: {{ callback: v => v + '%' }},
+        grid: {{ color: '#f1f3f5' }}
+      }}
+    }}
+  }}
+}});
+
 new Chart(document.getElementById('chart'), {{
   type: 'bar',
   data: {{
