@@ -1,0 +1,438 @@
+#!/usr/bin/env python3
+"""Generate fictional demo data for sf-cli.
+
+Run once before launching the demo:
+    python3 demo/generate_data
+
+Creates:
+    demo/config.json
+    demo/cache/opps.json
+    demo/cache/chatter/<id>.json  (for selected opps)
+    demo/notes_history.json
+"""
+
+import json
+import os
+from datetime import datetime, timedelta
+
+DEMO_DIR = os.path.dirname(os.path.abspath(__file__))
+CACHE_DIR = os.path.join(DEMO_DIR, "cache")
+CHATTER_DIR = os.path.join(CACHE_DIR, "chatter")
+
+MGR_ID  = "005DEMO000000001AAA"
+SS_IDS  = {
+    "Alex Rivera":  "005DEMO000000002AAA",
+    "Jordan Kim":   "005DEMO000000003AAA",
+    "Sam Okafor":   "005DEMO000000004AAA",
+    "Morgan Chen":  "005DEMO000000005AAA",
+}
+
+def opp(id_, account, name, amount, stage, type_, ss, ae, territory,
+        close, created, stage_changed, forecast="Pipeline",
+        competitor=None, next_step=None, is_closed=False, description=None):
+    order = int(stage.split(".")[0]) if stage[0].isdigit() else 0
+    return {
+        "Account.Name":                         account,
+        "Name":                                 name,
+        "Id":                                   id_,
+        "Amount":                               amount,
+        "CurrencyIsoCode":                      "USD",
+        "Territory__c":                         territory,
+        "Owner.Name":                           ae,
+        "CloseDate":                            close,
+        "StageName":                            stage,
+        "Type":                                 type_,
+        "IsClosed":                             is_closed,
+        "Solution_Strategist1__r.Name":         ss,
+        "Solution_Strategist1__r.ManagerId":    MGR_ID,
+        "Solution_Strategist1__r.Id":           SS_IDS.get(ss, "005DEMO000000009AAA"),
+        "Supporting_Solution_Strategist__r.Name": None,
+        "Managerial_Forecast_Category__c":      forecast,
+        "Competitor__c":                        competitor,
+        "Compelling_Event__c":                  None,
+        "NextStep":                             next_step,
+        "CreatedDate":                          f"{created}T09:00:00.000+0000",
+        "LastStageChangeDate":                  f"{stage_changed}T09:00:00.000+0000",
+        "Description":                          description,
+    }
+
+OPPS = [
+    # Alex Rivera — North America
+    opp("006D001", "Apex Manufacturing", "NA_Apex_NB_Pricing",
+        480000, "3. Value Proposal", "New Business", "Alex Rivera", "Chris Nakamura",
+        "North America", "2026-06-30", "2025-10-15", "2026-03-02",
+        forecast="Best Case",
+        competitor="SAP",
+        next_step="Present value case to CFO on May 5",
+        description="Global manufacturer replacing legacy pricing system across 12 plants."),
+
+    opp("006D002", "BlueStar Logistics", "NA_BlueStar_NB_Platform",
+        320000, "2. Value Scenario", "New Business", "Alex Rivera", "Dana Patel",
+        "North America", "2026-07-31", "2025-11-20", "2026-02-14",
+        competitor="Vendavo",
+        next_step="Technical deep-dive scheduled for April 28",
+        description="Mid-market logistics company looking to automate freight pricing."),
+
+    opp("006D003", "ClearPath Retail", "NA_ClearPath_Exp_Margin",
+        175000, "4. Closing", "Up-sell and Retention", "Alex Rivera", "Chris Nakamura",
+        "North America", "2026-04-30", "2026-01-10", "2026-03-20",
+        forecast="Commit",
+        next_step="MSA redline returned — legal review in progress"),
+
+    opp("006D004", "Divergent Energy", "NA_Divergent_NB_B2B",
+        890000, "2. Value Scenario", "New Business", "Alex Rivera", "Riley Johnson",
+        "North America", "2026-09-30", "2025-09-05", "2026-01-18",
+        competitor="PROS",
+        next_step="PoC scope doc sent April 14 — awaiting sign-off",
+        description="Large energy supplier building B2B pricing capability from scratch."),
+
+    opp("006D005", "EaglePoint Financial", "NA_EaglePoint_NB_FeeOpt",
+        215000, "1. Qualified Prospect", "New Business", "Alex Rivera", "Dana Patel",
+        "North America", "2026-08-31", "2026-02-28", "2026-02-28",
+        next_step="Intro call completed — sending discovery questionnaire"),
+
+    opp("006D006", "FutureMed Health", "NA_FutureMed_NB_Contracts",
+        560000, "3. Value Proposal", "New Business", "Alex Rivera", "Quinn Martinez",
+        "North America", "2026-06-30", "2025-12-01", "2026-03-10",
+        forecast="Best Case",
+        competitor="Model N",
+        next_step="Proposal review call May 2",
+        description="Hospital network standardising contract pricing across 40 facilities."),
+
+    opp("006D007", "Globetec Systems", "NA_Globetec_Won_Core",
+        305000, "5. Closed Won", "New Business", "Alex Rivera", "Chris Nakamura",
+        "North America", "2026-03-31", "2025-08-12", "2026-03-28",
+        forecast="Closed", is_closed=True,
+        description="Signed Q1. Moving to implementation phase."),
+
+    opp("006D008", "HorizonPath Pharma", "NA_Horizon_Exp_Analytics",
+        130000, "2. Value Scenario", "Up-sell and Retention", "Alex Rivera", "Dana Patel",
+        "North America", "2026-07-31", "2026-01-22", "2026-03-05"),
+
+    # Jordan Kim — North America
+    opp("006D009", "IronRidge Industries", "NA_IronRidge_NB_Configure",
+        740000, "4. Closing", "New Business", "Jordan Kim", "Riley Johnson",
+        "North America", "2026-05-31", "2025-07-20", "2026-02-28",
+        forecast="Commit",
+        competitor="Salesforce CPQ",
+        next_step="Final commercial terms — call April 24",
+        description="Industrial manufacturer replacing CPQ for complex configure-price-quote."),
+
+    opp("006D010", "Jetstream Commerce", "NA_Jetstream_NB_Omni",
+        420000, "3. Value Proposal", "New Business", "Jordan Kim", "Quinn Martinez",
+        "North America", "2026-07-31", "2025-10-08", "2026-02-20",
+        forecast="Best Case",
+        competitor="Apttus",
+        next_step="Exec sponsor presentation April 30"),
+
+    opp("006D011", "Keystone Analytics", "NA_Keystone_NB_SaaS",
+        195000, "2. Value Scenario", "New Business", "Jordan Kim", "Chris Nakamura",
+        "North America", "2026-08-31", "2026-01-15", "2026-03-01",
+        next_step="Technical assessment in progress"),
+
+    opp("006D012", "LakeView Chemicals", "NA_LakeView_Exp_Global",
+        280000, "3. Value Proposal", "Up-sell and Retention", "Jordan Kim", "Dana Patel",
+        "North America", "2026-06-30", "2025-11-10", "2026-03-15",
+        forecast="Best Case",
+        competitor="SAP",
+        next_step="Global rollout proposal submitted April 10"),
+
+    opp("006D013", "MeriTech Solutions", "NA_MeriTech_NB_Enterprise",
+        1150000, "2. Value Scenario", "New Business", "Jordan Kim", "Riley Johnson",
+        "North America", "2026-09-30", "2025-06-01", "2025-12-10",
+        competitor="PROS;Vendavo",
+        next_step="PoC running until May 15 — weekly check-ins",
+        description="Largest deal in pipeline. ERP migration trigger."),
+
+    opp("006D014", "NorthShore Capital", "NA_NorthShore_NB_FeeCalc",
+        165000, "1. Qualified Prospect", "New Business", "Jordan Kim", "Quinn Martinez",
+        "North America", "2026-09-30", "2026-03-05", "2026-03-05",
+        next_step="Needs discovery call"),
+
+    opp("006D015", "Omniplex Retail", "NA_Omniplex_Exp_Promo",
+        310000, "4. Closing", "Up-sell and Retention", "Jordan Kim", "Chris Nakamura",
+        "North America", "2026-04-30", "2025-09-14", "2026-03-22",
+        forecast="Commit",
+        next_step="Order form with procurement"),
+
+    opp("006D016", "Apex Manufacturing", "NA_Apex_Exp_APAC",
+        220000, "2. Value Scenario", "Up-sell and Retention", "Jordan Kim", "Dana Patel",
+        "North America", "2026-07-31", "2026-01-08", "2026-02-18"),
+
+    # Sam Okafor — Europe
+    opp("006D017", "PeakLine AG", "EU_PeakLine_NB_Wholesale",
+        610000, "3. Value Proposal", "New Business", "Sam Okafor", "Riley Johnson",
+        "Europe", "2026-06-30", "2025-09-22", "2026-02-25",
+        forecast="Best Case",
+        competitor="Zilliant",
+        next_step="Value case presentation Berlin May 7",
+        description="German industrial wholesaler — 4 BUs in scope."),
+
+    opp("006D018", "Quantum Retail GmbH", "EU_Quantum_NB_Markdown",
+        385000, "2. Value Scenario", "New Business", "Sam Okafor", "Quinn Martinez",
+        "Europe", "2026-08-31", "2025-12-15", "2026-03-08",
+        competitor="Blue Yonder",
+        next_step="Tech eval scheduled April 29"),
+
+    opp("006D019", "Redline Pharma SA", "EU_Redline_NB_Contracts",
+        475000, "4. Closing", "New Business", "Sam Okafor", "Chris Nakamura",
+        "Europe", "2026-05-31", "2025-08-01", "2026-03-18",
+        forecast="Commit",
+        competitor="Model N",
+        next_step="Legal review — target close April 30"),
+
+    opp("006D020", "SilverBridge Bank", "EU_SilverBridge_NB_Fees",
+        290000, "1. Qualified Prospect", "New Business", "Sam Okafor", "Dana Patel",
+        "Europe", "2026-09-30", "2026-02-10", "2026-02-10",
+        next_step="RFP response due May 1"),
+
+    opp("006D021", "TrueNorth Energy NV", "EU_TrueNorth_Exp_B2B",
+        195000, "2. Value Scenario", "Up-sell and Retention", "Sam Okafor", "Riley Johnson",
+        "Europe", "2026-07-31", "2025-11-30", "2026-03-12"),
+
+    opp("006D022", "UltraFlex Logistics", "EU_UltraFlex_NB_Spot",
+        520000, "3. Value Proposal", "New Business", "Sam Okafor", "Quinn Martinez",
+        "Europe", "2026-06-30", "2025-10-20", "2026-03-01",
+        forecast="Best Case",
+        competitor="PROS",
+        next_step="Follow up post Easter",
+        description="Pan-European freight broker — spot pricing automation."),
+
+    opp("006D023", "VantagePoint Media", "EU_Vantage_NB_Programmatic",
+        145000, "1. Qualified Prospect", "New Business", "Sam Okafor", "Chris Nakamura",
+        "Europe", "2026-10-31", "2026-03-20", "2026-03-20"),
+
+    opp("006D024", "Westfall Chemicals AG", "EU_Westfall_Won_Base",
+        430000, "5. Closed Won", "New Business", "Sam Okafor", "Dana Patel",
+        "Europe", "2026-03-31", "2025-07-15", "2026-03-27",
+        forecast="Closed", is_closed=True),
+
+    # Morgan Chen — Mixed
+    opp("006D025", "Apex Manufacturing", "NA_Apex_NB_CPQ_West",
+        395000, "2. Value Scenario", "New Business", "Morgan Chen", "Riley Johnson",
+        "North America", "2026-07-31", "2025-12-10", "2026-02-22",
+        competitor="Salesforce CPQ",
+        next_step="Running PoC through April — weekly syncs"),
+
+    opp("006D026", "BlueStar Logistics", "EU_BlueStar_NB_Intermodal",
+        265000, "1. Qualified Prospect", "New Business", "Morgan Chen", "Quinn Martinez",
+        "Europe", "2026-09-30", "2026-02-14", "2026-02-14",
+        next_step="Intro call April 23"),
+
+    opp("006D027", "ClearPath Retail", "EU_ClearPath_NB_Dynamic",
+        540000, "3. Value Proposal", "New Business", "Morgan Chen", "Chris Nakamura",
+        "Europe", "2026-06-30", "2025-10-05", "2026-02-28",
+        forecast="Best Case",
+        competitor="Blue Yonder;Apttus",
+        next_step="Steering committee presentation May 12"),
+
+    opp("006D028", "Divergent Energy", "EU_Divergent_Exp_Network",
+        185000, "2. Value Scenario", "Up-sell and Retention", "Morgan Chen", "Dana Patel",
+        "Europe", "2026-08-31", "2026-01-25", "2026-03-14"),
+
+    opp("006D029", "EaglePoint Financial", "EU_EaglePoint_NB_Wealth",
+        660000, "4. Closing", "New Business", "Morgan Chen", "Riley Johnson",
+        "Europe", "2026-05-31", "2025-08-20", "2026-03-25",
+        forecast="Best Case",
+        competitor="SAP",
+        next_step="Procurement running final vendor comparison"),
+
+    opp("006D030", "FutureMed Health", "EU_FutureMed_Exp_DE",
+        210000, "3. Value Proposal", "Up-sell and Retention", "Morgan Chen", "Quinn Martinez",
+        "Europe", "2026-07-31", "2025-11-18", "2026-03-05",
+        next_step="Expand scope discussion scheduled April 25"),
+
+    # Unassigned opps (no ninja)
+    opp("006D031", "Keystone Analytics", "NA_Keystone_NB_MidMkt",
+        155000, "1. Qualified Prospect", "New Business", None, "Chris Nakamura",
+        "North America", "2026-09-30", "2026-03-15", "2026-03-15",
+        next_step="AE working on discovery — no SS yet"),
+
+    opp("006D032", "Quantum Retail GmbH", "EU_Quantum_Exp_Promo",
+        175000, "2. Value Scenario", "Up-sell and Retention", None, "Dana Patel",
+        "Europe", "2026-08-31", "2026-02-20", "2026-03-10",
+        next_step="Needs SS assignment"),
+
+    # Closed Lost
+    opp("006D033", "IronRidge Industries", "NA_IronRidge_NB_SMB",
+        95000, "6. Closed Lost", "New Business", "Jordan Kim", "Riley Johnson",
+        "North America", "2026-02-28", "2025-10-01", "2026-02-28",
+        forecast="Closed", is_closed=True),
+
+    opp("006D034", "LakeView Chemicals", "EU_LakeView_NB_Spot",
+        220000, "6. Closed Lost", "New Business", "Sam Okafor", "Quinn Martinez",
+        "Europe", "2026-03-31", "2025-09-10", "2026-03-31",
+        forecast="Closed", is_closed=True),
+]
+
+# Fix None SS
+for r in OPPS:
+    if r["Solution_Strategist1__r.Name"] is None:
+        r["Solution_Strategist1__r.Id"] = None
+        r["Solution_Strategist1__r.ManagerId"] = None
+
+
+CHATTER_POSTS = {
+    "006D001": [
+        {
+            "ParentId": "006D001",
+            "CreatedBy.Name": "Alex Rivera",
+            "CreatedDate": "2026-04-10T14:30:00.000+0000",
+            "Body": "NINJA UPDATE\nMet with CFO and VP Operations last Thursday. Strong executive alignment — they want to replace SAP pricing before their fiscal year starts in July. PoC results were well received. Value case in progress, targeting €480K ACV. Main risk is procurement timeline.\n\nNext Steps: Present final value case May 5. Legal to receive MSA draft by April 28.",
+            "Type": "TextPost",
+        },
+        {
+            "ParentId": "006D001",
+            "CreatedBy.Name": "Alex Rivera",
+            "CreatedDate": "2026-03-15T10:00:00.000+0000",
+            "Body": "SOLSTRAT 360\nStatus: Active\nActivity: Value Case\nCurrent: PoC completed successfully. Apex internal stakeholders aligned. Building value case with their finance team.\nNext Steps: Value case presentation to CFO May 5. MSA to be shared April 28.\nRisks: Budget approval pending board meeting in late May.",
+            "Type": "TextPost",
+        },
+    ],
+    "006D009": [
+        {
+            "ParentId": "006D009",
+            "CreatedBy.Name": "Jordan Kim",
+            "CreatedDate": "2026-04-15T09:15:00.000+0000",
+            "Body": "NINJA UPDATE\nCommercial terms call went well. Procurement is running parallel process but champion (VP Sales Ops) is strongly advocating for us over Salesforce CPQ. Key differentiator is our manufacturing-specific configurator. Targeting close by end of April.\n\nNext Steps: Final terms call April 24. Order form to be issued April 25.",
+            "Type": "TextPost",
+        },
+    ],
+    "006D013": [
+        {
+            "ParentId": "006D013",
+            "CreatedBy.Name": "Jordan Kim",
+            "CreatedDate": "2026-04-12T16:00:00.000+0000",
+            "Body": "NINJA UPDATE\nPoC is running well. MeriTech's pricing team (6 people) using the sandbox daily. Two of three use cases showing 8-12% margin improvement in simulations. Executive sponsor (CPO) is engaged. This is our largest active deal at $1.15M ACV.\n\nRisk: Competing against PROS who have an existing relationship with their CFO.",
+            "Type": "TextPost",
+        },
+        {
+            "ParentId": "006D013",
+            "CreatedBy.Name": "Jordan Kim",
+            "CreatedDate": "2026-03-20T11:00:00.000+0000",
+            "Body": "SOLSTRAT 360\nStatus: Active\nActivity: PoC (POM)\nCurrent: PoC kicked off March 18. MeriTech team ramping up. Three use cases in scope: B2B list price, customer-specific agreements, promo optimization.\nNext Steps: PoC readout May 15. Weekly syncs every Tuesday.\nRisks: PROS incumbent with CFO relationship. Budget cycle starts June 1.",
+            "Type": "TextPost",
+        },
+    ],
+    "006D017": [
+        {
+            "ParentId": "006D017",
+            "CreatedBy.Name": "Sam Okafor",
+            "CreatedDate": "2026-04-08T13:00:00.000+0000",
+            "Body": "NINJA UPDATE\nValue case almost complete. Met with CFO and two BU heads in Berlin last week. Strong business case — modeling €2.1M annual margin uplift against €610K investment. Competitor Zilliant lost traction after a poor reference call.\n\nNext Steps: Berlin presentation May 7. Targeting Q2 close.",
+            "Type": "TextPost",
+        },
+    ],
+    "006D019": [
+        {
+            "ParentId": "006D019",
+            "CreatedBy.Name": "Sam Okafor",
+            "CreatedDate": "2026-04-14T10:30:00.000+0000",
+            "Body": "NINJA UPDATE\nLegal review is the only remaining blocker. Their in-house counsel flagged two data residency clauses. Our legal team responded April 12. If resolved this week, we can sign by April 30 as planned.\n\nChampion (Head of Commercial) is very committed and pushing internally.",
+            "Type": "TextPost",
+        },
+    ],
+    "006D027": [
+        {
+            "ParentId": "006D027",
+            "CreatedBy.Name": "Morgan Chen",
+            "CreatedDate": "2026-04-11T15:45:00.000+0000",
+            "Body": "NINJA UPDATE\nStrong proposal meeting last week. Steering committee includes CFO, CTO, and Head of Pricing. Main competitor is Blue Yonder (incumbent for demand planning) and Apttus (legacy CPQ). Our differentiation on dynamic pricing AI is resonating.\n\nNext Steps: Steering committee May 12. Executive sponsor dinner May 11.",
+            "Type": "TextPost",
+        },
+    ],
+}
+
+NOTES = [
+    {
+        "opp_id": "006D003",
+        "status": "Active",
+        "activity": "Closing Support",
+        "date": "2026-04-14",
+        "author": "Alex Rivera",
+    },
+    {
+        "opp_id": "006D009",
+        "status": "Active",
+        "activity": "Closing Support",
+        "date": "2026-04-15",
+        "author": "Jordan Kim",
+    },
+    {
+        "opp_id": "006D013",
+        "status": "Active",
+        "activity": "PoC (POM)",
+        "date": "2026-04-12",
+        "author": "Jordan Kim",
+    },
+    {
+        "opp_id": "006D017",
+        "status": "Active",
+        "activity": "Value Case",
+        "date": "2026-04-08",
+        "author": "Sam Okafor",
+    },
+    {
+        "opp_id": "006D001",
+        "status": "Active",
+        "activity": "Value Case",
+        "date": "2026-04-10",
+        "author": "Alex Rivera",
+    },
+]
+
+
+def main():
+    os.makedirs(CHATTER_DIR, exist_ok=True)
+
+    # config.json
+    config = {
+        "org":            "demo@sf-cli-demo.com",
+        "manager_id":     MGR_ID,
+        "user_id":        MGR_ID,
+        "user_name":      "Demo Manager",
+        "deal_types":     ["New Business", "Up-sell and Retention"],
+        "note_statuses":  ["Active", "Inactive", "At Risk"],
+        "note_activities": [
+            "Disco", "Demo (POM)", "PoC (POM)", "Value Case",
+            "Closing Support", "Handover", "Stalled", "<empty>",
+        ],
+    }
+    with open(os.path.join(DEMO_DIR, "config.json"), "w") as f:
+        json.dump(config, f, indent=2)
+    print("  ✓ config.json")
+
+    # opps cache
+    fetched_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    cache = {"fetched_at": fetched_at, "records": OPPS}
+    with open(os.path.join(CACHE_DIR, "opps.json"), "w") as f:
+        json.dump(cache, f, indent=2)
+    print(f"  ✓ cache/opps.json  ({len(OPPS)} opportunities)")
+
+    # chatter cache
+    for opp_id, posts in CHATTER_POSTS.items():
+        path = os.path.join(CHATTER_DIR, f"{opp_id}.json")
+        with open(path, "w") as f:
+            json.dump({"fetched_at": fetched_at, "posts": posts}, f, indent=2)
+    print(f"  ✓ cache/chatter/   ({len(CHATTER_POSTS)} files)")
+
+    # notes history
+    history = [
+        {
+            "opp_id":   n["opp_id"],
+            "status":   n["status"],
+            "activity": n["activity"],
+            "date":     n["date"],
+            "author":   n["author"],
+        }
+        for n in NOTES
+    ]
+    with open(os.path.join(DEMO_DIR, "notes_history.json"), "w") as f:
+        json.dump(history, f, indent=2)
+    print(f"  ✓ notes_history.json  ({len(history)} notes)")
+
+    print(f"\n  Done. Run:  demo/salesfx --team\n")
+
+
+if __name__ == "__main__":
+    main()

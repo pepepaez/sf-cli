@@ -69,8 +69,9 @@ from chatter import (                                                       # no
 
 # --- Config ---
 
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_CONFIG_PATH = os.path.join(_SCRIPT_DIR, "config.json")
+_SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))  # code dir — fzf scripts etc.
+_DATA_DIR    = os.environ.get("SF_CLI_DIR", _SCRIPT_DIR)   # data dir — can be overridden
+_CONFIG_PATH = os.path.join(_DATA_DIR, "config.json")
 
 
 def load_config():
@@ -137,7 +138,7 @@ def enrich_for_display(records, note_lookup=None):
 
 # --- Saved views ---
 
-_VIEWS_PATH = os.path.join(_SCRIPT_DIR, "views.yaml")
+_VIEWS_PATH = os.path.join(_DATA_DIR, "views.yaml")
 
 
 def load_views():
@@ -254,7 +255,7 @@ def opp_list_view(opps, context="", filters=None):
             json.dump(persistent_notes, f)
         with open(baseline_file, "w", encoding="utf-8") as f:
             json.dump(persistent_notes, f)
-        history_file = os.path.join(_SCRIPT_DIR, "notes_history.json")
+        history_file = os.path.join(_DATA_DIR, "notes_history.json")
         try:
             with open(history_file, encoding="utf-8") as f:
                 history = json.load(f)
@@ -553,7 +554,7 @@ def _export_session_notes(notes_file, opps, baseline_file=None):
         print(f"  {GREEN}Saved to {fname}{RESET}")
 
     # Append new notes to the history file
-    history_file = os.path.join(_SCRIPT_DIR, "notes_history.json")
+    history_file = os.path.join(_DATA_DIR, "notes_history.json")
     history = []
     if os.path.exists(history_file):
         try:
@@ -751,7 +752,7 @@ def load_latest_notes():
     Returns a dict of {opp_id: note_dict} where each note has the latest
     values from the history file. Returns empty dict if no history exists.
     """
-    history_file = os.path.join(_SCRIPT_DIR, "notes_history.json")
+    history_file = os.path.join(_DATA_DIR, "notes_history.json")
     if not os.path.exists(history_file):
         return {}
     try:

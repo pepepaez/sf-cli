@@ -6,7 +6,9 @@ Nothing in this module has side effects beyond reading config.json once.
 import json
 import os
 
-_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+_SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
+_DATA_DIR    = os.environ.get("SF_CLI_DIR", _SCRIPT_DIR)
+_CONFIG_PATH = os.path.join(_DATA_DIR, "config.json")
 
 
 def _load_config():

@@ -15,10 +15,11 @@ from constants import (
 )
 from formatting import strip_html
 
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CACHE_DIR = os.path.join(_SCRIPT_DIR, "cache")
+_SCRIPT_DIR       = os.path.dirname(os.path.abspath(__file__))
+_DATA_DIR         = os.environ.get("SF_CLI_DIR", _SCRIPT_DIR)
+CACHE_DIR         = os.path.join(_DATA_DIR, "cache")
 CHATTER_CACHE_DIR = os.path.join(CACHE_DIR, "chatter")
-OPP_CACHE_FILE = os.path.join(CACHE_DIR, "opps.json")
+OPP_CACHE_FILE    = os.path.join(CACHE_DIR, "opps.json")
 
 
 def save_chatter_cache(opp_id, posts):

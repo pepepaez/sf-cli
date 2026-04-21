@@ -1,0 +1,26 @@
+# Demo saved views
+pipeline:
+  team: true
+  quarter: this+next
+
+closing:
+  team: true
+  quarter: this
+  stage: ["3. Value Proposal", "4. Closing"]
+
+portfolio:
+  team: true
+  stage: open
+
+unassigned:
+  ninja: none
+  quarter: this+next
+
+eu:
+  team: true
+  territory: [Europe]
+
+newbiz:
+  team: true
+  quarter: this+next
+  type: New Business

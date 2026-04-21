@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Demo launcher — runs salesfx with fictional demo data.
+
+Usage:  demo/salesfx [salesfx flags]
+        demo/salesfx -v portfolio
+        demo/salesfx --team
+"""
+import os, sys
+
+DEMO_DIR  = os.path.dirname(os.path.abspath(__file__))
+PARENT    = os.path.dirname(DEMO_DIR)
+REAL_APP  = os.path.join(PARENT, "salesfx")
+
+os.environ["SF_CLI_DIR"] = DEMO_DIR
+os.execv(sys.executable, [sys.executable, REAL_APP] + sys.argv[1:])
