@@ -73,7 +73,7 @@ def main():
 
     # Update data file (so preview indices stay in sync)
     _include_private = {"_quarter", "_type_short", "_note_status", "_note_activity",
-                        "_opp_age_days", "_stage_days"}
+                        "_opp_age_days", "_stage_days", "_acv"}
     preview_data = [{k: v for k, v in r.items()
                      if not k.startswith("_") or k in _include_private}
                     for r in records]

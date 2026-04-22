@@ -271,7 +271,7 @@ def opp_list_view(opps, context="", filters=None, cache_info=""):
     while True:
         # Write record data to temp file so fzf helper scripts can read it
         _preview_fields = {"_quarter", "_type_short", "_note_status", "_note_activity",
-                           "_opp_age_days", "_stage_days"}
+                           "_opp_age_days", "_stage_days", "_acv"}
         preview_data = [
             {k: v for k, v in r.items() if not k.startswith("_") or k in _preview_fields}
             for r in opps
