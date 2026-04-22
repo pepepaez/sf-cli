@@ -336,7 +336,7 @@ def opp_list_view(opps, context="", filters=None, cache_info=""):
 
             _static = f" · {context}" if context else ""
             _cache  = f" · {cache_info}" if cache_info else ""
-            fzf_header   = f"{help_line}\n{DIM}{context}{RESET}"
+            fzf_header   = help_line
             border_label = f" {fmt_eur(total_acv)} | {len(opps)} opps{_static}{_cache} "
             header_cmd   = (f"transform-border-label("
                             f"python3 {header_script} {acv_file} {lines_file} {{q}}"
@@ -406,7 +406,7 @@ def opp_list_view(opps, context="", filters=None, cache_info=""):
                 f"+reload(python3 {reload_script} {filter_input_file} {tmp.name}"
                 f" {notes_file} {context_file} {acv_file} {lines_file} {opp_ids_file}"
                 f" {border_filter_file})"
-                f"+transform-header(cat {help_line_file}; printf '\\n'; cat {context_file})"
+                f"+transform-header(cat {help_line_file})"
                 f"+transform-border-label("
                 f"python3 {header_script} {acv_file} {lines_file} {{q}}"
                 f" {border_filter_file} {border_cache_file})"
