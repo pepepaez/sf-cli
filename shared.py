@@ -336,7 +336,7 @@ def opp_list_view(opps, context="", filters=None, cache_info=""):
 
             _static = f" · {context}" if context else ""
             _cache  = f" · {cache_info}" if cache_info else ""
-            fzf_header   = f"{help_line}\n"
+            fzf_header   = f"{help_line}\n "
             border_label = f" {fmt_eur(total_acv)} | {len(opps)} opps{_static}{_cache} "
             header_cmd   = (f"transform-border-label("
                             f"python3 {header_script} {acv_file} {lines_file} {{q}}"
