@@ -502,7 +502,7 @@ def opp_list_view(opps, context="", filters=None):
                         if not _note_lookup:
                             _note_lookup = load_latest_notes()
                         inject_notes(opps, _note_lookup)
-                        context = view_name
+                        context = build_filter_summary(_vargs)
                         filters = view_cfg
             continue
 
