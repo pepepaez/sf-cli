@@ -12,4 +12,5 @@ session_notes*.csv
 cache/
 docs/
 reports/stage_flow/
+reports/export/
 team_capacity/

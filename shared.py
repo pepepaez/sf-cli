@@ -315,6 +315,7 @@ def opp_list_view(opps, context="", filters=None, cache_info=""):
                 f"  {_key('ctrl-n', ORANGE)} all notes"
                 f"  {_key('ctrl-r', ORANGE)} chatter"
                 f"  {_key('ctrl-o', ORANGE)} open in SF"
+                f"  {_key('ctrl-e', ORANGE)} export"
                 f"  {_key('ctrl-l', ORANGE)} views"
                 f"  {_key('ctrl-u', ORANGE)} refilter"
                 f"  {_key('ctrl-v', ORANGE)} save view"
@@ -377,6 +378,10 @@ def opp_list_view(opps, context="", filters=None, cache_info=""):
                 f" && python3 {save_script} {filters_file} {view_name_file})"
             )
 
+            # Export current view to Excel
+            export_script = os.path.join(script_dir, "fzf", "fzf-export-opps.py")
+            export_cmd = f"execute(python3 {export_script} {tmp.name} {notes_file})"
+
             # Note capture — reload list after to update Status/Activity columns
             reload_notes_script = os.path.join(script_dir, "fzf", "fzf-reload-notes.py")
             note_cmd = (
@@ -430,6 +435,7 @@ def opp_list_view(opps, context="", filters=None, cache_info=""):
                    "--bind", f"ctrl-n:{notes_history_cmd}",
                    "--bind", f"ctrl-r:{chatter_refresh_cmd}",
                    "--bind", f"ctrl-o:{open_opp_cmd}",
+                   "--bind", f"ctrl-e:{export_cmd}",
                    "--bind", f"ctrl-u:{refilter_cmd}",
                    "--bind", f"ctrl-v:{save_view_cmd}",
                    "--bind", "ctrl-/:change-preview-window("
