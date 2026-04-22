@@ -17,6 +17,7 @@ New code should import directly from the specific sub-module where possible.
 import csv
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -400,32 +401,7 @@ def opp_list_view(opps, context="", filters=None):
                 f"python3 {header_script} {acv_file} {lines_file} {{q}})"
             )
 
-            # View picker — shell pipeline (same pattern as ctrl-s/ctrl-x)
-            # Avoids nested Python+fzf which can fail to render TUI inside execute()
-            view_input_file = tmp.name + ".view"
-            view_list_file  = tmp.name + ".viewlist"
-            _all_views = load_views()
-            if _all_views:
-                _nw = max(len(n) for n in _all_views)
-                with open(view_list_file, "w", encoding="utf-8") as _vf:
-                    _vf.write("\n".join(
-                        f"{n:<{_nw}}\t{view_to_args_str(cfg)}"
-                        for n, cfg in _all_views.items()
-                    ))
-                _vh = min(len(_all_views) + 4, 18)
-                pick_view_cmd = (
-                    f"execute(cat {view_list_file}"
-                    f" | fzf --prompt 'View > ' --height {_vh} --reverse --no-sort"
-                    f" --header 'Select a view  (ESC to cancel)'"
-                    f" | cut -f2- > {view_input_file})"
-                    f"+reload(python3 {reload_script} {view_input_file} {tmp.name}"
-                    f" {notes_file} {context_file} {acv_file} {lines_file} {opp_ids_file})"
-                    f"+transform-header(cat {help_line_file}; printf '\\n'; cat {context_file})"
-                    f"+transform-border-label("
-                    f"python3 {header_script} {acv_file} {lines_file} {{q}})"
-                )
-            else:
-                pick_view_cmd = "execute(echo 'No views defined in views.yaml' | cat)"
+            # ctrl-l view switching is handled via --expect (Python-side, like ctrl-g)
 
             preview_cmd = f"python3 {preview_script} {tmp.name} {{1}} {notes_file}"
             cmd = ["fzf", "--prompt", "Opps > ", "--height", "90%", "--reverse",
@@ -433,7 +409,7 @@ def opp_list_view(opps, context="", filters=None):
                    "--header-lines", "2", "--no-hscroll", "--ellipsis", "",
                    "--preview", preview_cmd, "--preview-window", "bottom:50%",
                    "--border", "top", "--border-label", border_label,
-                   "--expect", "ctrl-g",
+                   "--expect", "ctrl-g,ctrl-l",
                    "--bind", f"enter:{note_cmd}",
                    "--bind", "right:preview-down",
                    "--bind", "left:preview-up",
@@ -443,7 +419,6 @@ def opp_list_view(opps, context="", filters=None):
                    "--bind", f"ctrl-n:{notes_history_cmd}",
                    "--bind", f"ctrl-r:{chatter_refresh_cmd}",
                    "--bind", f"ctrl-o:{open_opp_cmd}",
-                   "--bind", f"ctrl-l:{pick_view_cmd}",
                    "--bind", f"ctrl-u:{refilter_cmd}",
                    "--bind", f"ctrl-v:{save_view_cmd}",
                    "--bind", "ctrl-/:change-preview-window("
@@ -478,7 +453,59 @@ def opp_list_view(opps, context="", filters=None):
 
         if key_pressed == "ctrl-g":
             grouped_view(opps, context, filters=filters)
-            continue  # return to list view after grouped view exits
+            continue
+
+        if key_pressed == "ctrl-l":
+            all_views = load_views()
+            if all_views:
+                nw = max(len(n) for n in all_views)
+                choices = [f"{n:<{nw}}  {view_to_args_str(cfg)}"
+                           for n, cfg in all_views.items()]
+                selected = fzf(choices, prompt="View > ")
+                if selected:
+                    view_name = selected.strip().split()[0]
+                    view_cfg  = all_views.get(view_name)
+                    if view_cfg and os.path.exists(OPP_CACHE_FILE):
+                        with open(OPP_CACHE_FILE, encoding="utf-8") as _f:
+                            _all = json.load(_f)["records"]
+                        _fstr  = view_to_args_str(view_cfg)
+                        _vargs = make_filter_parser().parse_args(
+                            shlex.split(_fstr) if _fstr else []
+                        )
+                        if _vargs.team and not _vargs.quarter:
+                            _vargs.quarter = ["this+next"]
+                        _filtered = apply_filters(_all, _vargs)
+                        if DEAL_TYPES:
+                            _filtered = [r for r in _filtered
+                                         if r.get("Type", "") in DEAL_TYPES]
+                        _ninjas = view_cfg.get("include_ninjas", [])
+                        if _ninjas:
+                            import argparse as _ap
+                            _seen = {r["Id"] for r in _filtered}
+                            _no_team = {**vars(_vargs), "team": None}
+                            _pool = apply_filters(_all, _ap.Namespace(**_no_team))
+                            for _nm in _ninjas:
+                                _q = _nm.lower()
+                                for r in _pool:
+                                    if r["Id"] not in _seen and _q in (
+                                            r.get("Solution_Strategist1__r.Name") or "").lower():
+                                        _filtered.append(r)
+                                        _seen.add(r["Id"])
+                        opps = enrich(_filtered)
+                        _note_lookup = {}
+                        if os.path.exists(notes_file):
+                            try:
+                                with open(notes_file, encoding="utf-8") as _f:
+                                    _note_lookup = json.load(_f)
+                            except (json.JSONDecodeError, OSError):
+                                pass
+                        if not _note_lookup:
+                            _note_lookup = load_latest_notes()
+                        inject_notes(opps, _note_lookup)
+                        context = view_name
+                        filters = view_cfg
+            continue
+
         _export_session_notes(notes_file, opps, baseline_file)
         _cleanup_files(opp_ids_file)
         return
