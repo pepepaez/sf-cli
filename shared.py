@@ -400,17 +400,32 @@ def opp_list_view(opps, context="", filters=None):
                 f"python3 {header_script} {acv_file} {lines_file} {{q}})"
             )
 
-            # View picker — select a saved view, reload with its filter args
-            pick_view_script = os.path.join(script_dir, "fzf", "fzf-pick-view.py")
-            view_input_file  = tmp.name + ".view"
-            pick_view_cmd = (
-                f"execute(python3 {pick_view_script} {view_input_file})"
-                f"+reload(python3 {reload_script} {view_input_file} {tmp.name}"
-                f" {notes_file} {context_file} {acv_file} {lines_file} {opp_ids_file})"
-                f"+transform-header(cat {help_line_file}; printf '\\n'; cat {context_file})"
-                f"+transform-border-label("
-                f"python3 {header_script} {acv_file} {lines_file} {{q}})"
-            )
+            # View picker — shell pipeline (same pattern as ctrl-s/ctrl-x)
+            # Avoids nested Python+fzf which can fail to render TUI inside execute()
+            view_input_file = tmp.name + ".view"
+            view_list_file  = tmp.name + ".viewlist"
+            _all_views = load_views()
+            if _all_views:
+                _nw = max(len(n) for n in _all_views)
+                with open(view_list_file, "w", encoding="utf-8") as _vf:
+                    _vf.write("\n".join(
+                        f"{n:<{_nw}}\t{view_to_args_str(cfg)}"
+                        for n, cfg in _all_views.items()
+                    ))
+                _vh = min(len(_all_views) + 4, 18)
+                pick_view_cmd = (
+                    f"execute(cat {view_list_file}"
+                    f" | fzf --prompt 'View > ' --height {_vh} --reverse --no-sort"
+                    f" --header 'Select a view  (ESC to cancel)'"
+                    f" | cut -f2- > {view_input_file})"
+                    f"+reload(python3 {reload_script} {view_input_file} {tmp.name}"
+                    f" {notes_file} {context_file} {acv_file} {lines_file} {opp_ids_file})"
+                    f"+transform-header(cat {help_line_file}; printf '\\n'; cat {context_file})"
+                    f"+transform-border-label("
+                    f"python3 {header_script} {acv_file} {lines_file} {{q}})"
+                )
+            else:
+                pick_view_cmd = "execute(echo 'No views defined in views.yaml' | cat)"
 
             preview_cmd = f"python3 {preview_script} {tmp.name} {{1}} {notes_file}"
             cmd = ["fzf", "--prompt", "Opps > ", "--height", "90%", "--reverse",
@@ -445,6 +460,7 @@ def opp_list_view(opps, context="", filters=None):
                 tmp.name + ".sort",  tmp.name + ".cols",
                 tmp.name + ".filters", tmp.name + ".viewname",
                 tmp.name + ".view",  tmp.name + ".refilter",
+                tmp.name + ".viewlist",
             ]:
                 try:
                     os.unlink(tf)
