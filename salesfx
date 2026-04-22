@@ -193,8 +193,6 @@ def main():
 
     records = enrich(records)
 
-    print(f"\033[2A\033[K  {len(records)} opportunities ({filter_summary}) · {cache_label}\n")
-
     if not records:
         return
 
@@ -227,7 +225,7 @@ def main():
         filters["territory"] = args.territory
 
     # Interactive: always start in flat list, ctrl-g to toggle grouped view
-    opp_list_view(records, filter_summary, filters=filters)
+    opp_list_view(records, filter_summary, filters=filters, cache_info=cache_label)
 
 
 if __name__ == "__main__":

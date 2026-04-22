@@ -221,7 +221,7 @@ def fzf(items, prompt="", header="", multi=False):
 
 # --- Interactive views ---
 
-def opp_list_view(opps, context="", filters=None):
+def opp_list_view(opps, context="", filters=None, cache_info=""):
     """Interactive fzf list of opportunities with detail + chatter preview.
 
     Keybindings:
@@ -321,17 +321,26 @@ def opp_list_view(opps, context="", filters=None):
             )
 
             # Write help line and context so ctrl-u reload can restore the header
-            help_line_file = tmp.name + ".helpline"
-            context_file   = tmp.name + ".context"
+            help_line_file        = tmp.name + ".helpline"
+            context_file          = tmp.name + ".context"
+            border_filter_file    = tmp.name + ".borderfilter"
+            border_cache_file     = tmp.name + ".bordercache"
             with open(help_line_file, "w", encoding="utf-8") as f:
                 f.write(help_line)
             with open(context_file, "w", encoding="utf-8") as f:
                 f.write(f"{DIM}{context}{RESET}")
+            with open(border_filter_file, "w", encoding="utf-8") as f:
+                f.write(context)
+            with open(border_cache_file, "w", encoding="utf-8") as f:
+                f.write(cache_info)
 
+            _static = f" · {context}" if context else ""
+            _cache  = f" · {cache_info}" if cache_info else ""
             fzf_header   = f"{help_line}\n{DIM}{context}{RESET}"
-            border_label = f" {fmt_eur(total_acv)} | {len(opps)} opps "
+            border_label = f" {fmt_eur(total_acv)} | {len(opps)} opps{_static}{_cache} "
             header_cmd   = (f"transform-border-label("
-                            f"python3 {header_script} {acv_file} {lines_file} {{q}})")
+                            f"python3 {header_script} {acv_file} {lines_file} {{q}}"
+                            f" {border_filter_file} {border_cache_file})")
 
             fzf_input = [col_header, col_sep] + numbered_lines
 
@@ -395,10 +404,12 @@ def opp_list_view(opps, context="", filters=None):
                 f"execute(echo '' | fzf --prompt 'Filter > ' --print-query"
                 f" --height 5 --reverse | head -1 > {filter_input_file})"
                 f"+reload(python3 {reload_script} {filter_input_file} {tmp.name}"
-                f" {notes_file} {context_file} {acv_file} {lines_file} {opp_ids_file})"
+                f" {notes_file} {context_file} {acv_file} {lines_file} {opp_ids_file}"
+                f" {border_filter_file})"
                 f"+transform-header(cat {help_line_file}; printf '\\n'; cat {context_file})"
                 f"+transform-border-label("
-                f"python3 {header_script} {acv_file} {lines_file} {{q}})"
+                f"python3 {header_script} {acv_file} {lines_file} {{q}}"
+                f" {border_filter_file} {border_cache_file})"
             )
 
             # ctrl-l view switching is handled via --expect (Python-side, like ctrl-g)
@@ -436,6 +447,7 @@ def opp_list_view(opps, context="", filters=None):
                 tmp.name + ".filters", tmp.name + ".viewname",
                 tmp.name + ".view",  tmp.name + ".refilter",
                 tmp.name + ".viewlist",
+                tmp.name + ".borderfilter", tmp.name + ".bordercache",
             ]:
                 try:
                     os.unlink(tf)

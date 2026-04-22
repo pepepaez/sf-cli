@@ -18,13 +18,14 @@ def main():
     if len(sys.argv) < 7:
         return
 
-    filter_file   = sys.argv[1]
-    data_file     = sys.argv[2]
-    notes_file    = sys.argv[3]
-    context_file  = sys.argv[4]
-    acv_file      = sys.argv[5]
-    lines_file    = sys.argv[6]
-    opp_ids_file  = sys.argv[7] if len(sys.argv) > 7 else None
+    filter_file        = sys.argv[1]
+    data_file          = sys.argv[2]
+    notes_file         = sys.argv[3]
+    context_file       = sys.argv[4]
+    acv_file           = sys.argv[5]
+    lines_file         = sys.argv[6]
+    opp_ids_file       = sys.argv[7] if len(sys.argv) > 7 else None
+    border_filter_file = sys.argv[8] if len(sys.argv) > 8 else None
 
     # Read the typed filter string
     try:
@@ -79,10 +80,13 @@ def main():
     with open(data_file, "w", encoding="utf-8") as f:
         json.dump(preview_data, f)
 
-    # Update context file
+    # Update context file and border filter file
     filter_summary = build_filter_summary(args)
     with open(context_file, "w", encoding="utf-8") as f:
         f.write(f"{DIM}{filter_summary}{RESET}")
+    if border_filter_file:
+        with open(border_filter_file, "w", encoding="utf-8") as f:
+            f.write(filter_summary)
 
     # Update acv and lines files for border label
     TAB = "\t"
