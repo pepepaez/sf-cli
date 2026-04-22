@@ -1,57 +1,65 @@
 # sf-cli
 
-Terminal tools for querying Salesforce. All commands use the `sf` CLI under the hood.
+A terminal-native pipeline management tool built on the [Salesforce CLI](https://developer.salesforce.com/tools/salesforcecli). Browse, filter, and export your team's opportunity pipeline — faster than the Salesforce UI, without leaving the terminal.
 
-## Prerequisites
+> Built as a real-world example of the **Salesforce Headless 360** approach: the `sf` CLI as the data layer, Python as the logic layer, and `fzf` as the interactive interface. No browser required after authentication.
 
-- `sf` CLI (Salesforce CLI, authenticated)
-- `python3`
-- `fzf` — fuzzy selection (`brew install fzf`)
-- `vd` — VisiData, for interactive spreadsheet view (`brew install visidata`)
+## How it works
 
-## Setup
-
-Run the setup script to configure your Salesforce org and manager ID:
-
-```bash
-./sf-setup
+```
+Salesforce ←→ sf CLI ←→ Local cache ←→ salesfx / sf_export
 ```
 
-This will:
-1. Check that `sf` CLI is installed
-2. Authenticate with Salesforce via `sf org login web` (opens browser)
-3. Search for your user by name
-4. Determine whether to use your ID or your manager's ID for team scoping
-5. Save everything to `config.json` (gitignored)
-
-You can also create `config.json` manually from `config.example.json`.
-
-### config.json
-
-```json
-{
-  "org": "user@company.com",
-  "manager_id": "005...",
-  "user_id": "",
-  "user_name": "Your Name",
-  "deal_types": ["New Business", "Up-sell and Retention"],
-  "default_territories": ["North America"]
-}
-```
-
-- `deal_types` — filters applied to all queries (Salesforce API values, not display names)
-- `default_territories` — not applied by default, used only when explicitly referenced
-
----
+- Uses your existing `sf` CLI authentication — no new Salesforce integration needed
+- Data is cached locally after the first load, so browsing is instant
+- Live queries available on demand with `--refresh`
+- All Salesforce reads use SOQL via `sf data query`
 
 ## Commands
 
-### sf_opps — Search, browse, and aggregate opportunities
+| Command | What it does |
+|---------|-------------|
+| `salesfx` | Interactive fuzzy-search UI over opportunities |
+| `sf_export` | Generates a filled Excel spreadsheet from pipeline data |
+| `sf_stage_flow` | HTML + CSV report: ACV movement through pipeline stages |
+| `sf-setup` | One-time setup: installs dependencies, authenticates, writes config |
 
-The primary tool. Search with flexible filters, browse results interactively, toggle to aggregated views, and save queries as named views.
+## Prerequisites
+
+- `sf` CLI — `brew install salesforce-cli`
+- `python3` — 3.8+
+- `fzf` — `brew install fzf`
+- `pyyaml` — `pip3 install --user pyyaml`
+- `vd` — optional, for spreadsheet output (`brew install visidata`)
+
+## Setup
+
+```bash
+git clone https://github.com/pepepaez/sf-cli.git ~/sf-cli
+cd ~/sf-cli
+./sf-setup
+```
+
+`sf-setup` will:
+1. Check and install missing dependencies (with prompts)
+2. Authenticate with Salesforce via browser
+3. Find your user in Salesforce and resolve your team's manager ID
+4. Write `config.json` and create `views.yaml` from the template
+
+Then verify it works:
+
+```bash
+salesfx --team
+```
+
+---
+
+## salesfx — Interactive pipeline browser
+
+The primary tool. Loads opportunities from cache, applies filters, and opens a fuzzy-search interface with a live preview pane showing full opportunity detail and chatter.
 
 ```
-sf_opps [options]
+salesfx [options]
 ```
 
 | Option | Description |
@@ -62,38 +70,43 @@ sf_opps [options]
 | `-q`, `--quarter QUARTER` | Quarter: `this`, `next`, `this+next`, `Q3`, `Q32026`, `2026Q3`, `2026-Q3` |
 | `-t`, `--type TYPE [TYPE ...]` | Filter by deal type(s). Single value: fuzzy. Multiple: exact match |
 | `-s`, `--stage STAGE [STAGE ...]` | Filter by stage(s). Single value: fuzzy. Multiple: exact match |
-| `--team [MANAGER_ID]` | Filter by team. No value = your team from config. Implies `-q this+next` |
+| `--team [MANAGER_ID]` | Filter by team (uses manager ID from config). Implies `-q this+next` |
 | `-r`, `--territory TERRITORY [...]` | Filter by territory. Supports `NA` and `EU` aliases |
 | `-v`, `--view NAME` | Use a saved view from `views.yaml` |
 | `--vd` | Open results in VisiData (non-interactive) |
 | `--out FILE` | Save results to CSV file (non-interactive) |
+| `--refresh` | Re-fetch data from Salesforce before opening |
 
-All filters combine with AND. At least one filter is required. `deal_types` from config is always applied.
+All filters combine with AND. `deal_types` from `config.json` is always applied.
 
-**Key bindings (opp list view):**
+**Key bindings — list view:**
 
 | Key | Action |
 |-----|--------|
-| `←` / `→` | Scroll preview pane |
-| `ctrl-/` | Cycle preview pane size (60% → 50% → 40% → 25% → hidden) |
-| `ctrl-s` | Sort by column (opens picker) |
-| `ctrl-x` | Toggle columns on/off (opens multi-select picker) |
+| `enter` | Capture a SOLSTRAT 360 note for the selected opportunity |
+| `ctrl-n` | Browse all session notes |
+| `ctrl-r` | Refresh chatter cache for visible opportunities |
+| `ctrl-o` | Open selected opportunity in Salesforce |
+| `ctrl-l` | Switch to a saved view |
+| `ctrl-s` | Sort by column |
+| `ctrl-x` | Toggle columns on/off |
 | `ctrl-g` | Toggle to grouped/aggregated view |
+| `ctrl-u` | Re-filter with new arguments |
 | `ctrl-v` | Save current filters as a named view |
+| `ctrl-/` | Cycle preview pane size |
+| `←` / `→` | Scroll preview pane |
 | `ESC` | Go back |
 
-**Key bindings (grouped/aggregated view):**
+**Key bindings — grouped view:**
 
 | Key | Action |
 |-----|--------|
-| `Enter` | Toggle dimension on/off, or drill down into opp list |
-| `←` / `→` | Scroll preview pane |
-| `ctrl-/` | Cycle preview pane size |
+| `Enter` | Drill into a group, or toggle a dimension on/off |
 | `ctrl-g` | Switch back to flat list |
-| `ctrl-v` | Save current filters as a named view |
+| `←` / `→` | Scroll preview pane |
 | `ESC` | Go back |
 
-**fzf search tips:**
+**fzf search patterns:**
 
 | Pattern | Meaning |
 |---------|---------|
@@ -101,102 +114,144 @@ All filters combine with AND. At least one filter is required. `deal_types` from
 | `^prefix` | Match at start |
 | `suffix$` | Match at end |
 | `!term` | Exclude rows matching term |
-| `term1 \| term2` | OR matching |
+| `term1 \| term2` | OR match |
 
 **Examples:**
 
 ```bash
-sf_opps -a Volvo                              # Search by account
-sf_opps -n Justin                             # All opps for a Solution Strategist
-sf_opps -n none -q this                       # Unassigned opps this quarter
-sf_opps --ae Todd -q this                     # Todd's opps this quarter
-sf_opps -a PPG -s Closing                     # PPG opps in closing stage
-sf_opps -s "3. Value Proposal" "4. Closing"   # Multiple stages (exact match)
-sf_opps -t new                                # Fuzzy match on type
-sf_opps --team                                # Your team's pipeline
-sf_opps --team -q this                        # Your team, current quarter
-sf_opps -r NA -q this+next                    # North America, this+next quarter
-sf_opps -r NA EU                              # Multiple territories
-sf_opps -n Meredith --vd                      # Open in VisiData
-sf_opps -a Ford --out ford.csv                # Save to CSV
-sf_opps -v pipeline                           # Use a saved view
-sf_opps -v closing -q next                    # Saved view with quarter override
+salesfx --team                                # Your team's open pipeline
+salesfx --team --refresh                      # Pull fresh data from Salesforce first
+salesfx -v portfolio                          # Use a saved view
+salesfx -a Volvo                              # Search by account
+salesfx -n Justin                             # All opps for a Solution Strategist
+salesfx -n none -q this                       # Unassigned opps this quarter
+salesfx --ae Todd -q this                     # AE's opps this quarter
+salesfx -s "3. Value Proposal" "4. Closing"   # Multiple stages (exact match)
+salesfx -r NA -q this+next                    # North America, this + next quarter
+salesfx -n Meredith --vd                      # Open in VisiData
+salesfx -a Ford --out ford.csv                # Save to CSV
+salesfx -v closing -q next                    # Saved view with quarter override
 ```
 
 ---
 
-### Saved Views
+## Saved Views
 
-Define reusable queries in `views.yaml`:
+Define reusable filter presets in `views.yaml`:
 
 ```yaml
 pipeline:
   team: true
   quarter: this+next
 
-unassigned:
-  quarter: this+next
-  ninja: none
-  territory: [North America]
-
 closing:
   team: true
   quarter: this
   stage: ["3. Value Proposal", "4. Closing"]
 
-newbiz:
-  team: true
+unassigned:
   quarter: this+next
-  type: New Business
+  ninja: none
+  territory: [North America]
+
+portfolio:
+  team: true
+  stage: open
+  include_ninjas: [former_team_member]   # OR-in people no longer on the team
 ```
 
-**Available view fields:** `team`, `account`, `ae`, `ninja`, `quarter`, `type`, `stage`, `territory`
+**Available fields:** `team`, `account`, `ae`, `ninja`, `quarter`, `type`, `stage`, `territory`, `include_ninjas`
 
 - Single values use fuzzy matching: `type: new` matches "New Business"
 - Lists use exact IN matching: `stage: ["3. Value Proposal", "4. Closing"]`
 - `team: true` uses your manager ID from config
-- `ninja: none` matches opps with no Solution Strategist
-- Territory supports aliases: `territory: [NA]`
+- `ninja: none` matches opps with no Solution Strategist assigned
+- `include_ninjas` OR-ins specific people (e.g. former team members) with the same stage/quarter filters
+- Territory aliases: `NA`, `EU`
 
-CLI flags override view settings: `sf_opps -v pipeline -q this`
+CLI flags override view settings: `salesfx -v pipeline -q this`
 
-You can also save views interactively with `ctrl-v` from any fzf view.
-
----
-
-### sf_report — Run predefined reports
-
-Run JSON-defined reports from the `reports/` directory with optional transforms.
-
-```
-sf_report [report-name] [options]
-```
-
-| Option | Description |
-|--------|-------------|
-| `report` | Report name. Prompts with fzf if omitted |
-| `-t`, `--table` | Horizontal table format |
-| `--vd` | Open in VisiData |
-| `-o`, `--output FILE` | Save results to CSV |
-| `--list` | List available reports |
-
-**Example:**
-
-```bash
-sf_report                          # Pick report interactively
-sf_report open-opps                # Run the open-opps report
-sf_report --list                   # List available reports
-```
+Save views interactively with `ctrl-v`, or switch views with `ctrl-l`.
 
 ---
 
-## Workflow
+## sf_export — Excel export
+
+Generates a timestamped Excel file from your pipeline using the `portfolio` view from `views.yaml`.
 
 ```bash
-sf_opps --team                      # Team pipeline, drill down with aggregation
-sf_opps -a Volvo                    # Search by account, browse opps
-sf_opps -n Justin -q this           # SS opps this quarter
-sf_opps -v closing                  # Saved view: deals near closing
+sf_export              # Export using cached data
+sf_export --refresh    # Refresh from Salesforce first
 ```
 
-The interactive opp list shows a preview pane with full detail card + chatter (side by side). From any opp list, `ctrl-g` toggles to a grouped view with dimension toggles (Type, Quarter, Stage, Solution Strategist). Enter on a group drills into its opportunities.
+**Output:** `team_capacity/SolStrat_Capacity_Status_YYYYMMDD_HHMM.xlsx`
+
+The workbook has two sheets:
+
+**Deals** — one row per opportunity:
+- Solution Strategist, Account, Opportunity, Type, ACV, Stage, Quarter, Close Date, Owner
+- Status and Activity (from SOLSTRAT 360 notes)
+- Opp Age (days) and Stage Age (days) — numeric, sortable
+
+**Chatter** — one row per cached chatter post:
+- Account, Opportunity, Author, Date, Type (Ninja Update / SolStrat 360 / General), Post body
+
+> Chatter data comes from the local cache. Run `salesfx -v portfolio` and press `ctrl-r` to populate it before exporting.
+
+---
+
+## sf_stage_flow — Pipeline stage flow report
+
+Generates an HTML + CSV report showing how much ACV moved through each pipeline stage over a date range.
+
+```bash
+sf_stage_flow                              # Jan 1 this year → today
+sf_stage_flow --from "Q1 2026"             # From start of Q1
+sf_stage_flow --from "Jan 2026" --to "Mar 2026"
+sf_stage_flow --from 2026-01-01 --to 2026-04-30
+```
+
+**Date formats accepted:** `2026-03-15`, `2026-03`, `Q1 2026`, `Jan 2026`
+
+**Output:** `reports/stage_flow/stage_flow_YYYYMMDD_HHMM.html` + `.csv`
+
+The HTML report includes:
+- **Conversion funnel** — ACV and deal count per stage, with conversion % between stages (click any stage to see the deal list)
+- **Monthly activity chart** — ACV entering each stage per month
+
+---
+
+## Demo mode
+
+A self-contained demo with fictional data — no Salesforce connection required.
+
+```bash
+python3 demo/generate_data    # Generate fictional pipeline data (run once)
+demo/salesfx --team           # Browse the demo pipeline
+demo/salesfx -v portfolio     # Portfolio view
+demo/salesfx -v closing       # Late-stage deals
+```
+
+The demo includes 34 fictional opportunities across 4 Solution Strategists, two territories (North America and Europe), with realistic chatter posts and session notes.
+
+---
+
+## config.json
+
+Written by `sf-setup`. Key fields:
+
+```json
+{
+  "org": "user@company.com",
+  "manager_id": "005...",
+  "user_id": "005...",
+  "user_name": "Your Name",
+  "deal_types": ["New Business", "Up-sell and Retention"],
+  "note_statuses": ["Active", "Inactive"],
+  "note_activities": ["Disco", "Demo (POM)", "PoC (POM)", "Value Case", "Closing Support", "Handover", "Stalled"]
+}
+```
+
+- `manager_id` — scopes `--team` queries; set to your own ID if you manage the team, or your manager's ID if you're an IC
+- `deal_types` — only opportunities with these Salesforce `Type` values are shown
+- `note_statuses` / `note_activities` — options shown in the SOLSTRAT 360 note capture picker

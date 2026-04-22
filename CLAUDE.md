@@ -32,7 +32,7 @@ After setup the user runs `salesfx --team` to verify it works.
 sf-cli/
 ├── salesfx              # Main interactive command (entry point)
 ├── sf_export            # Excel export command (entry point)
-├── sf_report            # Predefined report runner
+├── sf_stage_flow        # Pipeline stage flow report (HTML + CSV)
 ├── sf-setup             # One-time setup script
 │
 ├── constants.py         # Colors, field names, column definitions, limits
@@ -41,7 +41,6 @@ sf-cli/
 ├── chatter.py           # Chatter cache: fetch, store, parse posts
 ├── shared.py            # Core: enrich(), opp_list_view(), load_views(), etc.
 ├── sfq.py               # Thin sf CLI wrapper — sf_query() lives here
-├── transforms.py        # Used only by sf_report
 │
 ├── config.json          # Personal config — NOT in git
 ├── config.example.json  # Documents all available config keys
