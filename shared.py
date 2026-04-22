@@ -188,11 +188,11 @@ def view_to_args_str(view):
     parts = []
     if view.get("team"):
         parts.append("--team")
-    for flag, k in [("--quarter", "quarter"), ("--account", "account"),
-                    ("--ae", "ae"), ("--ninja", "ninja")]:
+    for flag, k in [("--account", "account"), ("--ae", "ae"), ("--ninja", "ninja")]:
         if k in view:
             parts.append(f"{flag} {view[k]}")
-    for flag, k in [("--type", "type"), ("--stage", "stage"), ("--territory", "territory")]:
+    for flag, k in [("--quarter", "quarter"), ("--type", "type"),
+                    ("--stage", "stage"), ("--territory", "territory")]:
         if k in view:
             vals = view[k] if isinstance(view[k], list) else [view[k]]
             quoted = " ".join(f'"{v}"' if " " in str(v) else str(v) for v in vals)
