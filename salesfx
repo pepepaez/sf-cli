@@ -159,7 +159,6 @@ def main():
         records = cache_data["records"]
         fetched_at = cache_data.get("fetched_at", "")
         cache_label = f"cache from {fetched_at}"
-        print(f"\n  {DIM}Using local cache ({fetched_at}) — run with --refresh to update{RESET}\n")
     else:
         print(f"\n  {BOLD}{YELLOW}Fetching from Salesforce...{RESET} ({filter_summary})\n")
         query = build_cache_query()
